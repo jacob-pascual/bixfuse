@@ -18,7 +18,12 @@ pub fn bip39(entropy: &[u8; 64], language: bip39::Language, words: usize) -> Str
     let bytes = words * 4 / 3;
     let mnemonic = bip39::Mnemonic::from_entropy_in(language, &entropy[..bytes])
         .expect("12 to 24 words is a valid entropy length");
-    mnemonic.words().collect::<Vec<_>>().join(" ").nfc().collect()
+    mnemonic
+        .words()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .nfc()
+        .collect()
 }
 
 pub fn wif(entropy: &[u8; 64]) -> Result<String, InvalidKey> {
@@ -39,7 +44,10 @@ pub fn xprv(entropy: &[u8; 64]) -> Result<String, InvalidKey> {
 }
 
 pub fn hex(entropy: &[u8; 64], num_bytes: usize) -> String {
-    entropy[..num_bytes].iter().map(|b| format!("{b:02x}")).collect()
+    entropy[..num_bytes]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 pub fn base64(entropy: &[u8; 64], pwd_len: usize) -> String {
@@ -213,15 +221,69 @@ mod tests {
     fn bipsea_cross_checks() {
         let r = root();
         let cases = [
-            (Language::Japanese, 1, 12, 0, "おまいり にんてい こふん ぎんいろ にんい ぜんご ひめい まほう たたみ さとう ざいたく あてな"),
-            (Language::Korean, 2, 12, 0, "분필 생활 밀리미터 차남 고객 연락 코끼리 휴일 범인 축하 예절 주먹"),
-            (Language::Spanish, 3, 12, 5, "ropa musgo igual asno junco pelea fachada cuesta retrato acudir aldea célula"),
-            (Language::SimplifiedChinese, 4, 18, 4, "古 志 李 探 挤 螺 栏 端 缸 三 使 奉 寒 接 兼 酒 表 外"),
-            (Language::TraditionalChinese, 5, 21, 2, "箭 響 易 氮 元 熟 只 吉 疾 火 倒 統 塗 縫 拔 誣 烯 床 池 重 著"),
-            (Language::French, 6, 12, 6, "cerveau vigueur scandale parler édifier sceptre étrange perplexe adorer dénicher erreur clivage"),
-            (Language::Italian, 7, 12, 7, "cifrare dubbio nettuno rubrica arenile affetto davanti sillaba fetta specie mantide ripieno"),
-            (Language::Czech, 8, 24, 3, "mobil dotknout nakonec kohout soutok dozorce zhotovit uklidnit osoba manko zasunout posudek chyba kobyla cinkot lopuch masopust poledne uzdravit odcizit sekunda nerv odvaha svah"),
-            (Language::Portuguese, 9, 15, 1, "acusador tarraxa custear reenvio roseira rabisco tingido ineficaz magnata moeda anomalia enjoar espreita cirurgia galocha"),
+            (
+                Language::Japanese,
+                1,
+                12,
+                0,
+                "おまいり にんてい こふん ぎんいろ にんい ぜんご ひめい まほう たたみ さとう ざいたく あてな",
+            ),
+            (
+                Language::Korean,
+                2,
+                12,
+                0,
+                "분필 생활 밀리미터 차남 고객 연락 코끼리 휴일 범인 축하 예절 주먹",
+            ),
+            (
+                Language::Spanish,
+                3,
+                12,
+                5,
+                "ropa musgo igual asno junco pelea fachada cuesta retrato acudir aldea célula",
+            ),
+            (
+                Language::SimplifiedChinese,
+                4,
+                18,
+                4,
+                "古 志 李 探 挤 螺 栏 端 缸 三 使 奉 寒 接 兼 酒 表 外",
+            ),
+            (
+                Language::TraditionalChinese,
+                5,
+                21,
+                2,
+                "箭 響 易 氮 元 熟 只 吉 疾 火 倒 統 塗 縫 拔 誣 烯 床 池 重 著",
+            ),
+            (
+                Language::French,
+                6,
+                12,
+                6,
+                "cerveau vigueur scandale parler édifier sceptre étrange perplexe adorer dénicher erreur clivage",
+            ),
+            (
+                Language::Italian,
+                7,
+                12,
+                7,
+                "cifrare dubbio nettuno rubrica arenile affetto davanti sillaba fetta specie mantide ripieno",
+            ),
+            (
+                Language::Czech,
+                8,
+                24,
+                3,
+                "mobil dotknout nakonec kohout soutok dozorce zhotovit uklidnit osoba manko zasunout posudek chyba kobyla cinkot lopuch masopust poledne uzdravit odcizit sekunda nerv odvaha svah",
+            ),
+            (
+                Language::Portuguese,
+                9,
+                15,
+                1,
+                "acusador tarraxa custear reenvio roseira rabisco tingido ineficaz magnata moeda anomalia enjoar espreita cirurgia galocha",
+            ),
         ];
         for (language, code, words, index, want) in cases {
             let e = r.entropy(&[39, code, words as u32, index]).unwrap();
@@ -236,7 +298,11 @@ mod tests {
             "936073,147111,067771,865978"
         );
         assert_eq!(
-            dice(&r.entropy(&[89101, 2147483647, 3, 5]).unwrap(), 2147483647, 3),
+            dice(
+                &r.entropy(&[89101, 2147483647, 3, 5]).unwrap(),
+                2147483647,
+                3
+            ),
             "1947580742,0278320120,0004449472"
         );
         assert_eq!(

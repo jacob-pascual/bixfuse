@@ -34,9 +34,7 @@ pub fn generate(bits: u64, drng: &mut Drng) -> RsaKey {
     let min_p = (&one << (2 * size_p - 1)).sqrt();
     let min_distance = &one << (bits / 2 - 100);
     loop {
-        let p = generate_probable_prime(size_p, drng, |c| {
-            *c > min_p && (c - 1u32).gcd(&e) == one
-        });
+        let p = generate_probable_prime(size_p, drng, |c| *c > min_p && (c - 1u32).gcd(&e) == one);
         let q = generate_probable_prime(size_q, drng, |c| {
             let distance = if *c > p { c - &p } else { &p - c };
             *c > min_q && (c - 1u32).gcd(&e) == one && distance > min_distance
@@ -237,7 +235,11 @@ pub(crate) mod tests {
         if len < 0x80 {
             out.push(len as u8);
         } else {
-            let len_bytes: Vec<u8> = len.to_be_bytes().into_iter().skip_while(|b| *b == 0).collect();
+            let len_bytes: Vec<u8> = len
+                .to_be_bytes()
+                .into_iter()
+                .skip_while(|b| *b == 0)
+                .collect();
             out.push(0x80 | len_bytes.len() as u8);
             out.extend(len_bytes);
         }
@@ -320,7 +322,11 @@ pub(crate) mod tests {
         let want = [0, 1, 1, 0, 1, 0, 0, -1, 1, 0, 0, -1, 0, -1, -1];
         for (a, want) in want.iter().enumerate() {
             assert_eq!(jacobi(a as i64, &BigUint::from(15u32)), *want, "a = {a}");
-            assert_eq!(jacobi(a as i64 - 15, &BigUint::from(15u32)), *want, "a = {a} - 15");
+            assert_eq!(
+                jacobi(a as i64 - 15, &BigUint::from(15u32)),
+                *want,
+                "a = {a} - 15"
+            );
         }
     }
 }

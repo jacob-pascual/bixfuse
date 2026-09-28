@@ -9,7 +9,8 @@ use std::process::{Command, Stdio};
 use bixfuse::bip85::{Drng, Root};
 use bixfuse::{apps, openpgp, openssh, rsa};
 
-const MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+const MNEMONIC: &str =
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
 /// Runs `cmd` with `stdin` as input and returns its standard output.
 fn run(cmd: &mut Command, stdin: &[u8]) -> String {
@@ -62,14 +63,19 @@ fn ssh_keygen_reads_the_private_key() {
     let private = dir.write("id_rsa", &format!("{}\n", openssh::private_key(&key)));
     let public = dir.write("id_rsa.pub", &format!("{}\n", openssh::public_key(&key)));
 
-    let derived = run(Command::new("ssh-keygen").arg("-y").arg("-f").arg(&private), b"");
+    let derived = run(
+        Command::new("ssh-keygen").arg("-y").arg("-f").arg(&private),
+        b"",
+    );
     assert_eq!(derived, format!("{}\n", openssh::public_key(&key)));
 
     // A signature with the private key verifies with the public key, so
     // d, p, q, and iqmp are consistent with n and e.
     let message = b"bixfuse\n";
     let signature = run(
-        Command::new("ssh-keygen").args(["-Y", "sign", "-n", "file", "-f"]).arg(&private),
+        Command::new("ssh-keygen")
+            .args(["-Y", "sign", "-n", "file", "-f"])
+            .arg(&private),
         message,
     );
     let signature = dir.write("message.sig", &signature);
@@ -127,7 +133,10 @@ fn gpg_imports_and_uses_the_keys() {
         .map(|f| (f[0], f[11]))
         .collect();
     // The primary key shows its own flag (c) and the flags of its sub keys (ESA).
-    assert_eq!(keys, [("sec", "cESCA"), ("ssb", "e"), ("ssb", "a"), ("ssb", "s")]);
+    assert_eq!(
+        keys,
+        [("sec", "cESCA"), ("ssb", "e"), ("ssb", "a"), ("ssb", "s")]
+    );
     let fingerprints: Vec<&str> = listing
         .lines()
         .filter_map(|line| line.strip_prefix("fpr:::::::::"))
@@ -146,13 +155,27 @@ fn gpg_imports_and_uses_the_keys() {
     assert_eq!(ssh.join(" "), openssh::public_key(&subkeys[1]));
 
     let message = b"bixfuse\n";
-    let signed = gpg(&secret_home, &["--armor", "--sign", "--local-user", want[0]], message);
-    let encrypted = gpg(
+    let signed = gpg(
         &secret_home,
-        &["--armor", "--trust-model", "always", "--encrypt", "--recipient", want[0]],
+        &["--armor", "--sign", "--local-user", want[0]],
         message,
     );
-    assert_eq!(gpg(&secret_home, &["--decrypt"], encrypted.as_bytes()), "bixfuse\n");
+    let encrypted = gpg(
+        &secret_home,
+        &[
+            "--armor",
+            "--trust-model",
+            "always",
+            "--encrypt",
+            "--recipient",
+            want[0],
+        ],
+        message,
+    );
+    assert_eq!(
+        gpg(&secret_home, &["--decrypt"], encrypted.as_bytes()),
+        "bixfuse\n"
+    );
 
     // The public key alone verifies the signature.
     let public_home = TempDir::new("gpg-public");

@@ -51,8 +51,8 @@ const HASH_SHA256: u8 = 8;
 
 /// The ASN.1 DigestInfo prefix of SHA-256 for EMSA-PKCS1-v1_5 (RFC 8017).
 const SHA256_DIGEST_INFO: [u8; 19] = [
-    0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01,
-    0x05, 0x00, 0x04, 0x20,
+    0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
+    0x00, 0x04, 0x20,
 ];
 
 fn mpi(x: &BigUint) -> Vec<u8> {
@@ -132,7 +132,9 @@ impl<'a> Key<'a> {
         for x in [&self.rsa.d, &self.rsa.p, &self.rsa.q, &self.rsa.u] {
             secret.extend(mpi(x));
         }
-        let checksum = secret.iter().fold(0u16, |sum, b| sum.wrapping_add(*b as u16));
+        let checksum = secret
+            .iter()
+            .fold(0u16, |sum, b| sum.wrapping_add(*b as u16));
         let mut out = self.public.clone();
         out.push(0);
         out.extend(secret);
@@ -183,7 +185,12 @@ impl<'a> Key<'a> {
 }
 
 /// Builds the packets of a transferable key, secret or public.
-fn transferable_key(user_id: &str, primary: &RsaKey, subkeys: [&RsaKey; 3], secret: bool) -> Vec<u8> {
+fn transferable_key(
+    user_id: &str,
+    primary: &RsaKey,
+    subkeys: [&RsaKey; 3],
+    secret: bool,
+) -> Vec<u8> {
     let primary = Key::new(primary);
     let primary_context = Key::hash_context(&primary.public);
     let mut out = if secret {
@@ -216,7 +223,11 @@ fn transferable_key(user_id: &str, primary: &RsaKey, subkeys: [&RsaKey; 3], secr
         } else {
             packet(TAG_PUBLIC_SUBKEY, &subkey.public)
         });
-        let context = [primary_context.as_slice(), &Key::hash_context(&subkey.public)].concat();
+        let context = [
+            primary_context.as_slice(),
+            &Key::hash_context(&subkey.public),
+        ]
+        .concat();
         let mut hashed = subpacket(SUBPACKET_KEY_FLAGS, &[flags]);
         if flags & FLAG_SIGN != 0 {
             // A signing sub key must also sign the primary key (RFC 4880 5.2.1).
