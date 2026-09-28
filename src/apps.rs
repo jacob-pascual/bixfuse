@@ -4,10 +4,11 @@
 //! returns the text of the output, without the trailing newline.
 
 use base64::Engine;
-use bech32::{Bech32, Hrp};
+use bech32::{Bech32, ByteIterExt, Fe32IterExt, Hrp};
 use bitcoin::bip32::{ChainCode, ChildNumber, Fingerprint, Xpriv};
 use bitcoin::secp256k1::SecretKey;
 use bitcoin::{NetworkKind, PrivateKey};
+use kem::{Decapsulator, KeyExport};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::bip85::{Drng, InvalidKey};
@@ -106,6 +107,30 @@ pub fn age_public(entropy: &[u8; 64]) -> String {
     let secret: [u8; 32] = entropy[..32].try_into().unwrap();
     let public = x25519_dalek::x25519(secret, x25519_dalek::X25519_BASEPOINT_BYTES);
     bech32::encode::<Bech32>(Hrp::parse("age").unwrap(), &public).unwrap()
+}
+
+/// The age post-quantum (MLKEM768-X25519) identity of the first 32 bytes.
+pub fn age_pq_private(entropy: &[u8; 64]) -> String {
+    bech32::encode_upper::<Bech32>(Hrp::parse("age-secret-key-pq-").unwrap(), &entropy[..32])
+        .unwrap()
+}
+
+/// The age post-quantum recipient: the X-Wing encapsulation key (1216 bytes)
+/// of the first 32 bytes. The age specification uses Bech32 without a length
+/// limit, and the recipient has 1959 characters. `bech32::encode` refuses
+/// strings longer than the code length, so this function uses the encoder
+/// iterators, which compute the same checksum without the length check.
+pub fn age_pq_public(entropy: &[u8; 64]) -> String {
+    let seed: [u8; 32] = entropy[..32].try_into().unwrap();
+    let key = x_wing::DecapsulationKey::from(seed)
+        .encapsulation_key()
+        .to_bytes();
+    key.iter()
+        .copied()
+        .bytes_to_fes()
+        .with_checksum::<Bech32>(&Hrp::parse("age1pq").unwrap())
+        .chars()
+        .collect()
 }
 
 #[cfg(test)]
@@ -212,6 +237,28 @@ mod tests {
         assert_eq!(
             age_public(&e),
             "age1m0hhzxelxsxnxm4ennvdpk75j8s7mn5w4tt3e4ntug5qx256wslqmdz8e9"
+        );
+    }
+
+    /// The post-quantum vector of bitcoin/bips#2174. The PR gives the
+    /// SHA-256 of the recipient instead of the 1959 characters.
+    #[test]
+    fn age_pq_vector() {
+        use sha2::{Digest, Sha256};
+        let e = root().entropy(&[128169, 32, 0]).unwrap();
+        assert_eq!(
+            age_pq_private(&e),
+            "AGE-SECRET-KEY-PQ-1AG7WKZCZA689SAMECCL5K7E6Y854PGSN78K98J4KPRGNAPUKUMWQ5AN2M5"
+        );
+        let recipient = age_pq_public(&e);
+        assert_eq!(recipient.len(), 1959);
+        assert!(recipient.starts_with("age1pq1"));
+        assert_eq!(
+            Sha256::digest(recipient.as_bytes())
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>(),
+            "855bd04ee0cd6cfdf5717fb946d859824a79fbbdf6304dadcc11dbb91abe0df6"
         );
     }
 

@@ -13,6 +13,7 @@ ctrlc = { version = "3.5.2", features = ["termination"] }
 ed25519-dalek = "3.0.0"
 fuser = "0.18.0"
 hmac = "0.13.0"
+kem = "0.3"
 libc = "0.2"
 num-bigint = "0.5.1"
 num-integer = "0.1.47"
@@ -21,6 +22,7 @@ sha1 = "0.11.0"
 sha2 = "0.11.0"
 shake = "0.1.0"
 unicode-normalization = "0.1"
+x-wing = "0.1"
 x25519-dalek = "3.0.0"
 
 # RSA key generation is slow without optimization, also in tests.

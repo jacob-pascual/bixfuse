@@ -14,7 +14,7 @@ prosper short ramp prepare exchange stove life snack client enough purpose fold
 $ cat /mnt/bixfuse/hex/32/0
 e477d4694160a384b28ee2f72b54edcf0822fd6e1ee1780447455cdbed8f8c45
 $ cat /mnt/bixfuse/.ssh/id_ed25519.pub
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBLNnAEuWd15WSVVNTQRA/UUz7wRqzkKU26yArVE7HVd
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINcZp5MpnnfHtWuKtCgQIpI0CQQPbSVnpvgZO9BvDq/l
 ```
 
 `mnemonic.txt` holds the BIP-39 mnemonic
@@ -41,19 +41,30 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBLNnAEuWd15WSVVNTQRA/UUz7wRqzkKU26yArVE7HVd
 
 | Path | Content |
 |---|---|
-| `.ssh/id_ed25519`, `.ssh/id_ed25519.pub` | OpenSSH Ed25519 key, seed `hex/32/0` |
+| `.ssh/id_ed25519`, `.ssh/id_ed25519.pub` | OpenSSH Ed25519 key, index 0 |
+| `.ssh/ed25519/{index}/id_ed25519[.pub]` | OpenSSH Ed25519 key |
 | `.ssh/id_rsa`, `.ssh/id_rsa.pub` | OpenSSH RSA key of `rsa/4096/0` |
-| `.ssh/ed25519/{index}/id_ed25519[.pub]` | OpenSSH Ed25519 key, seed `hex/32/{index}` |
 | `.ssh/rsa/{key_bits}/{key_index}[/{0,1,2}]/id_rsa[.pub]` | OpenSSH RSA key |
-| `.age/private.age`, `.age/public.age` | age identity and recipient of `hex/32/0` |
-| `.age/x25519/{index}/private.age`, `public.age` | age identity and recipient of `hex/32/{index}` |
+| `.age/private.age`, `.age/public.age` | age X25519 identity and recipient, index 0 |
+| `.age/x25519/{index}/private.age`, `public.age` | age X25519 identity and recipient |
+| `.age/private-pq.age`, `.age/public-pq.age` | age post-quantum identity and recipient, index 0 |
+| `.age/mlkem768x25519/{index}/private.age`, `public.age` | age post-quantum identity and recipient |
 | `.gnupg/secret.asc`, `.gnupg/public.asc` | OpenPGP key of `rsa/4096/0` and its sub keys (needs `--gpg-user-id`) |
 | `.gnupg/rsa/{key_bits}/{key_index}/secret.asc`, `public.asc` | OpenPGP key (needs `--gpg-user-id`) |
 
-**Caution:** an Ed25519 key and an age key with the same index come from the
-same 32 bytes (`hex/32/{index}`). The defaults `.ssh/id_ed25519` and
-`.age/private.age` are both index 0, so they are one secret. To keep an SSH
-key and an age key independent, use different indexes.
+BIP-85 does not define Ed25519 or age keys, so bixfuse gives each key type
+its own application number, in the style of BIP-85 RSA (`828365'` = ASCII
+`RSA`). No two key types share a seed.
+
+| Key type | Derivation path |
+|---|---|
+| OpenSSH Ed25519 | `m/83696968'/838372'/25519'/{index}'` (`SSH`) |
+| age X25519 | `m/83696968'/657169'/25519'/{index}'` (`AGE`) |
+| age post-quantum | `m/83696968'/657169'/768'/{index}'` (`AGE`, ML-KEM-768) |
+
+Other BIP-85 tools do not know these paths. If BIP-85 adopts
+[bitcoin/bips#2174](https://github.com/bitcoin/bips/pull/2174), which derives
+age keys from `hex/32/{index}`, bixfuse will change to those paths.
 
 `ls` does not show index directories, but every valid index opens.
 RSA keys are computed on first access: 4096-bit keys take 1 to 6 seconds.

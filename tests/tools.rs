@@ -104,7 +104,8 @@ fn ssh_keygen_reads_the_rsa_keys() {
 fn ssh_keygen_reads_the_ed25519_keys() {
     let root = Root::from_mnemonic(MNEMONIC).unwrap();
     for index in [0, 1] {
-        let entropy = root.entropy(&[128169, 32, index]).unwrap();
+        // m/83696968'/838372'/25519'/{index}' (SPEC.md section 5.3)
+        let entropy = root.entropy(&[838372, 25519, index]).unwrap();
         let seed: [u8; 32] = entropy[..32].try_into().unwrap();
         check_ssh_key_pair(
             &format!("ssh-ed25519-{index}"),
@@ -220,13 +221,47 @@ fn gpg_imports_and_uses_the_keys() {
     }
 }
 
+/// Checks that age-keygen derives `recipient` from `identity`, and that a
+/// file encrypted to `recipient` decrypts with `identity`.
+fn check_age_key_pair(name: &str, identity: &str, recipient: &str) {
+    let derived = run(
+        Command::new("age-keygen").arg("-y"),
+        format!("{identity}\n").as_bytes(),
+    );
+    assert_eq!(derived, format!("{recipient}\n"), "{name}");
+
+    let dir = TempDir::new(name);
+    let identity_path = dir.write("identity", &format!("{identity}\n"));
+    let message = b"bixfuse\n";
+    let encrypted = run(
+        Command::new("age").args(["--encrypt", "--armor", "--recipient", recipient]),
+        message,
+    );
+    let decrypted = run(
+        Command::new("age")
+            .args(["--decrypt", "--identity"])
+            .arg(&identity_path),
+        encrypted.as_bytes(),
+    );
+    assert_eq!(decrypted.as_bytes(), message, "{name}");
+}
+
 #[test]
-fn age_keygen_derives_the_same_recipient() {
+fn age_reads_the_keys() {
     let root = Root::from_mnemonic(MNEMONIC).unwrap();
     for index in [0, 1, 2147483647] {
-        let entropy = root.entropy(&[128169, 32, index]).unwrap();
-        let identity = format!("{}\n", apps::age_private(&entropy));
-        let recipient = run(Command::new("age-keygen").arg("-y"), identity.as_bytes());
-        assert_eq!(recipient, format!("{}\n", apps::age_public(&entropy)));
+        // m/83696968'/657169'/25519'/{index}' and m/83696968'/657169'/768'/{index}'
+        let x25519 = root.entropy(&[657169, 25519, index]).unwrap();
+        check_age_key_pair(
+            &format!("age-x25519-{index}"),
+            &apps::age_private(&x25519),
+            &apps::age_public(&x25519),
+        );
+        let pq = root.entropy(&[657169, 768, index]).unwrap();
+        check_age_key_pair(
+            &format!("age-pq-{index}"),
+            &apps::age_pq_private(&pq),
+            &apps::age_pq_public(&pq),
+        );
     }
 }

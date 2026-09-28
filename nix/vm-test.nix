@@ -52,7 +52,9 @@ pkgs.testers.runNixOSTest {
         assert sorted(alice("ls -A mnt/.ssh").split()) == [
             "ed25519", "id_ed25519", "id_ed25519.pub", "id_rsa", "id_rsa.pub", "rsa",
         ]
-        assert sorted(alice("ls -A mnt/.age").split()) == ["private.age", "public.age", "x25519"]
+        assert sorted(alice("ls -A mnt/.age").split()) == [
+            "mlkem768x25519", "private-pq.age", "private.age", "public-pq.age", "public.age", "x25519",
+        ]
         assert sorted(alice("ls -A mnt/.gnupg").split()) == ["public.asc", "rsa", "secret.asc"]
 
     with subtest("every file kind"):
@@ -60,7 +62,7 @@ pkgs.testers.runNixOSTest {
             "bip39/czech/24/3", "wif/0", "xprv/0", "base64/20/0", "base85/80/0",
             "dice/6/10/0", "nostr/1/1", "rsa/2048/0/1/private.pem",
             ".ssh/ed25519/1/id_ed25519.pub", ".ssh/rsa/2048/0/2/id_rsa.pub",
-            ".age/x25519/1/public.age", ".gnupg/rsa/2048/0/public.asc",
+            ".age/x25519/1/public.age", ".age/mlkem768x25519/1/public.age", ".gnupg/rsa/2048/0/public.asc",
         ]:
             text = alice(f"cat mnt/{path}")
             assert len(text) > 1 and text.endswith("\n"), path
@@ -68,6 +70,7 @@ pkgs.testers.runNixOSTest {
     with subtest("flat defaults are index 0"):
         assert alice("cat mnt/.ssh/id_ed25519") == alice("cat mnt/.ssh/ed25519/0/id_ed25519")
         assert alice("cat mnt/.age/public.age") == alice("cat mnt/.age/x25519/0/public.age")
+        assert alice("cat mnt/.age/public-pq.age") == alice("cat mnt/.age/mlkem768x25519/0/public.age")
         assert alice("cat mnt/.ssh/id_rsa.pub") == alice("cat mnt/.ssh/rsa/4096/0/id_rsa.pub")
 
     with subtest("attributes"):
@@ -76,6 +79,9 @@ pkgs.testers.runNixOSTest {
 
     with subtest("reference tools read the key files"):
         assert alice("age-keygen -y mnt/.age/private.age") == alice("cat mnt/.age/public.age")
+        assert alice("age-keygen -y mnt/.age/private-pq.age") == alice("cat mnt/.age/public-pq.age")
+        roundtrip = "echo bixfuse | age -r \"$(cat mnt/.age/public-pq.age)\" | age -d -i mnt/.age/private-pq.age"
+        assert alice(roundtrip) == "bixfuse\n"
         assert alice("ssh-keygen -y -f mnt/.ssh/id_ed25519") == alice("cat mnt/.ssh/id_ed25519.pub")
         assert alice("ssh-keygen -y -f mnt/.ssh/rsa/2048/0/id_rsa") == alice("cat mnt/.ssh/rsa/2048/0/id_rsa.pub")
         assert alice("ssh-keygen -y -f mnt/rsa/2048/0/private.pem") == alice("cat mnt/.ssh/rsa/2048/0/id_rsa.pub")

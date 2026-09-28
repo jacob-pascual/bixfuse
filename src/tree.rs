@@ -38,6 +38,13 @@ const MAX_INDEX: u32 = (1 << 31) - 1;
 const APP_HEX: u32 = 128169;
 const APP_RSA: u32 = 828365;
 
+// The application numbers of bixfuse for key types that BIP-85 does not
+// define (SPEC.md section 5.3): ASCII "SSH" and "AGE", then the key type.
+const APP_SSH: u32 = 838372;
+const APP_AGE: u32 = 657169;
+const KEY_25519: u32 = 25519;
+const KEY_MLKEM768: u32 = 768;
+
 /// The RSA key of the flat default names in the hidden directories.
 const DEFAULT_RSA_BITS: u32 = 4096;
 
@@ -71,6 +78,13 @@ const RSA_PEM: &str = "private.pem";
 const SSH_RSA_FILES: [&str; 2] = ["id_rsa", "id_rsa.pub"];
 const SSH_ED25519_FILES: [&str; 2] = ["id_ed25519", "id_ed25519.pub"];
 const AGE_FILES: [&str; 2] = ["private.age", "public.age"];
+const AGE_KEY_TYPES: [&str; 2] = ["mlkem768x25519", "x25519"];
+const AGE_DEFAULT_FILES: [&str; 4] = [
+    "private-pq.age",
+    "private.age",
+    "public-pq.age",
+    "public.age",
+];
 const PGP_FILES: [&str; 2] = ["public.asc", "secret.asc"];
 
 enum Node {
@@ -124,7 +138,6 @@ enum Output {
     SshRsaPublic {
         rsa: Vec<u32>,
     },
-    /// The seed of an Ed25519 or age key is `hex/32/{index}`.
     SshEd25519Private {
         index: u32,
     },
@@ -135,6 +148,12 @@ enum Output {
         index: u32,
     },
     AgePublic {
+        index: u32,
+    },
+    AgePqPrivate {
+        index: u32,
+    },
+    AgePqPublic {
         index: u32,
     },
     PgpSecret {
@@ -452,15 +471,26 @@ impl Tree {
                 _ => None,
             }
         };
+        let age_pq = |i: &str, name: &str| -> Option<Node> {
+            let index = index(i)?;
+            match name {
+                "private.age" => Some(File(AgePqPrivate { index })),
+                "public.age" => Some(File(AgePqPublic { index })),
+                _ => None,
+            }
+        };
         let node = match *path {
-            [] => dir(&["x25519"], &AGE_FILES),
-            ["x25519"] => unlisted(),
+            [] => dir(&AGE_KEY_TYPES, &AGE_DEFAULT_FILES),
+            ["x25519" | "mlkem768x25519"] => unlisted(),
+            ["private-pq.age"] => age_pq("0", "private.age")?,
+            ["public-pq.age"] => age_pq("0", "public.age")?,
             [name] => age("0", name)?,
-            ["x25519", i] => {
+            ["x25519" | "mlkem768x25519", i] => {
                 index(i)?;
                 dir(&[], &AGE_FILES)
             }
             ["x25519", i, name] => age(i, name)?,
+            ["mlkem768x25519", i, name] => age_pq(i, name)?,
             _ => return None,
         };
         Some(node)
@@ -499,8 +529,10 @@ impl Tree {
     fn text(&self, output: &Output) -> Result<String, InvalidKey> {
         use Output::*;
         let entropy = |path: &[u32]| self.root.entropy(path);
-        let seed = |index: u32| -> Result<[u8; 32], InvalidKey> {
-            Ok(entropy(&[APP_HEX, 32, index])?[..32].try_into().unwrap())
+        let ed25519_seed = |index: u32| -> Result<[u8; 32], InvalidKey> {
+            Ok(entropy(&[APP_SSH, KEY_25519, index])?[..32]
+                .try_into()
+                .unwrap())
         };
         let text = match *output {
             Bip39 {
@@ -536,10 +568,16 @@ impl Tree {
             RsaPem { ref rsa } => self.rsa_key(rsa)?.to_pkcs1_pem(),
             SshRsaPrivate { ref rsa } => openssh::rsa_private_key(&*self.rsa_key(rsa)?),
             SshRsaPublic { ref rsa } => openssh::rsa_public_key(&*self.rsa_key(rsa)?),
-            SshEd25519Private { index } => openssh::ed25519_private_key(&seed(index)?),
-            SshEd25519Public { index } => openssh::ed25519_public_key(&seed(index)?),
-            AgePrivate { index } => apps::age_private(&entropy(&[APP_HEX, 32, index])?),
-            AgePublic { index } => apps::age_public(&entropy(&[APP_HEX, 32, index])?),
+            SshEd25519Private { index } => openssh::ed25519_private_key(&ed25519_seed(index)?),
+            SshEd25519Public { index } => openssh::ed25519_public_key(&ed25519_seed(index)?),
+            AgePrivate { index } => apps::age_private(&entropy(&[APP_AGE, KEY_25519, index])?),
+            AgePublic { index } => apps::age_public(&entropy(&[APP_AGE, KEY_25519, index])?),
+            AgePqPrivate { index } => {
+                apps::age_pq_private(&entropy(&[APP_AGE, KEY_MLKEM768, index])?)
+            }
+            AgePqPublic { index } => {
+                apps::age_pq_public(&entropy(&[APP_AGE, KEY_MLKEM768, index])?)
+            }
             PgpSecret { bits, key_index } | PgpPublic { bits, key_index } => {
                 let user_id = self
                     .gpg_user_id
@@ -642,6 +680,10 @@ mod tests {
             ".age/public.age",
             ".age/x25519/9/private.age",
             ".age/x25519/9/public.age",
+            ".age/private-pq.age",
+            ".age/public-pq.age",
+            ".age/mlkem768x25519/9/private.age",
+            ".age/mlkem768x25519/9/public.age",
             ".gnupg/rsa/2048/0/public.asc",
         ];
         for path in files {
@@ -655,17 +697,25 @@ mod tests {
     }
 
     #[test]
-    fn encodings_use_the_bip85_outputs() {
+    fn encodings_use_their_derivation_paths() {
         let t = tree(Some(USER_ID));
-        let entropy = t.root.entropy(&[APP_HEX, 32, 7]).unwrap();
-        let seed: [u8; 32] = entropy[..32].try_into().unwrap();
+        let age = t.root.entropy(&[APP_AGE, KEY_25519, 7]).unwrap();
         assert_eq!(
             read(&t, ".age/x25519/7/private.age"),
-            format!("{}\n", apps::age_private(&entropy))
+            format!("{}\n", apps::age_private(&age))
         );
+        let age_pq = t.root.entropy(&[APP_AGE, KEY_MLKEM768, 7]).unwrap();
+        assert_eq!(
+            read(&t, ".age/mlkem768x25519/7/private.age"),
+            format!("{}\n", apps::age_pq_private(&age_pq))
+        );
+        let ssh = t.root.entropy(&[APP_SSH, KEY_25519, 7]).unwrap();
         assert_eq!(
             read(&t, ".ssh/ed25519/7/id_ed25519.pub"),
-            format!("{}\n", openssh::ed25519_public_key(&seed))
+            format!(
+                "{}\n",
+                openssh::ed25519_public_key(&ssh[..32].try_into().unwrap())
+            )
         );
         let key = t.rsa_key(&[APP_RSA, 2048, 3, 1]).unwrap();
         assert_eq!(
@@ -678,6 +728,72 @@ mod tests {
         );
     }
 
+    /// Vectors from independent tools: entropy from bipsea 4.0.0, the
+    /// Ed25519 public keys from Python `cryptography`, the age recipients
+    /// from `age-keygen -y` 1.3.2. The post-quantum recipients are given as
+    /// SHA-256, because each one has 1959 characters.
+    #[test]
+    fn bixfuse_application_vectors() {
+        use sha2::{Digest, Sha256};
+        let t = tree(None);
+        let cases = [
+            (
+                ".ssh/id_ed25519.pub",
+                "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINcZp5MpnnfHtWuKtCgQIpI0CQQPbSVnpvgZO9BvDq/l",
+            ),
+            (
+                ".ssh/ed25519/1/id_ed25519.pub",
+                "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF6HHH2IEZSlv7frxZJLgSw3e3qLa+tK6vDZ3GpFCmdp",
+            ),
+            (
+                ".age/private.age",
+                "AGE-SECRET-KEY-1J4DVMY6SYWCL5J530MLR4530R8MMP6KQ078YK4ENXE49YZ5JGNWQ2YPL3Y",
+            ),
+            (
+                ".age/public.age",
+                "age1e240cs8tjjvwus4jtfpfn4v6pu5r3gfc2jv0psm6l6ptzpzsvvgsyn4fcd",
+            ),
+            (
+                ".age/x25519/1/private.age",
+                "AGE-SECRET-KEY-1L3Z82SYM8X2FKKUNWC2W54V4QMD69V00DNJK7G5ZUUSZ4AYMPLQQLNQU0M",
+            ),
+            (
+                ".age/x25519/1/public.age",
+                "age1f62da2urjqale9gv3cz70n9ge8e97y9nens28xzktz7rqfhlvaqsvmxwpw",
+            ),
+            (
+                ".age/private-pq.age",
+                "AGE-SECRET-KEY-PQ-1DD7R5WJMYCE6LKUWQS3EXGZDS7N7FXSFY262UDVCX7MM07S8KSZQCF073J",
+            ),
+            (
+                ".age/mlkem768x25519/1/private.age",
+                "AGE-SECRET-KEY-PQ-1Z8T4ESDJ62CJE5R4U47CNE5W8HU6YL66XQGUT44E2JM3JWNDLMRQH46MYZ",
+            ),
+        ];
+        for (path, want) in cases {
+            assert_eq!(read(&t, path), format!("{want}\n"), "{path}");
+        }
+        for (path, want) in [
+            (
+                ".age/public-pq.age",
+                "36acfcecf7c22702ada7eeac83aed4057894e2637203649587d92c27a4d1f370",
+            ),
+            (
+                ".age/mlkem768x25519/1/public.age",
+                "c3960c83eb6d241ac848b3b66cab24219b1bc88181f1248d4b3067e7af035a97",
+            ),
+        ] {
+            let recipient = read(&t, path);
+            let recipient = recipient.trim_end();
+            let digest: String = Sha256::digest(recipient.as_bytes())
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            assert_eq!(recipient.len(), 1959, "{path}");
+            assert_eq!(digest, want, "{path}");
+        }
+    }
+
     #[test]
     fn flat_defaults_are_index_0() {
         let t = tree(Some(USER_ID));
@@ -686,6 +802,8 @@ mod tests {
             (".ssh/id_ed25519.pub", ".ssh/ed25519/0/id_ed25519.pub"),
             (".age/private.age", ".age/x25519/0/private.age"),
             (".age/public.age", ".age/x25519/0/public.age"),
+            (".age/private-pq.age", ".age/mlkem768x25519/0/private.age"),
+            (".age/public-pq.age", ".age/mlkem768x25519/0/public.age"),
         ];
         for (flat, indexed) in same {
             assert_eq!(read(&t, flat), read(&t, indexed), "{flat}");
@@ -743,8 +861,20 @@ mod tests {
             ["0", "1", "2", "id_rsa", "id_rsa.pub"]
         );
         assert_eq!(names(&t, ".ssh/rsa/2048/0/2"), SSH_RSA_FILES);
-        assert_eq!(names(&t, ".age"), ["x25519", "private.age", "public.age"]);
+        assert_eq!(
+            names(&t, ".age"),
+            [
+                "mlkem768x25519",
+                "x25519",
+                "private-pq.age",
+                "private.age",
+                "public-pq.age",
+                "public.age"
+            ]
+        );
+        assert!(names(&t, ".age/mlkem768x25519").is_empty());
         assert_eq!(names(&t, ".age/x25519/3"), AGE_FILES);
+        assert_eq!(names(&t, ".age/mlkem768x25519/3"), AGE_FILES);
 
         let with_gpg = tree(Some(USER_ID));
         assert!(names(&with_gpg, "/").contains(&".gnupg".to_string()));
@@ -792,6 +922,9 @@ mod tests {
             ".ssh/rsa/2048/0/private.pem",
             ".age/key.txt",
             ".age/x25519/0/other.age",
+            ".age/x25519/0/private-pq.age",
+            ".age/mlkem768x25519/0/private-pq.age",
+            ".age/pq/0/private.age",
             ".gnupg",
             ".gnupg/secret.asc",
         ];

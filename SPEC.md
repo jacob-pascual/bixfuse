@@ -21,22 +21,21 @@ The filesystem root `/` is the BIP-85 root `m/83696968'`. It has two parts:
 
 1. Support every application in BIP-85 v2.1.0 (2026-08-02): BIP39, HD-Seed WIF,
    XPRV, HEX, PWD BASE64, PWD BASE85, RSA, RSA GPG, DICE, Nostr.
-2. Support age X25519 identities as defined by the open BIP-85 pull request
-   [bitcoin/bips#2174](https://github.com/bitcoin/bips/pull/2174).
-3. Support OpenSSH Ed25519 keys with the seed from the HEX application
-   (`hex/32/{index}`), the same way as age.
-4. Produce outputs identical to the reference implementations:
+2. Support key types that BIP-85 does not define: OpenSSH Ed25519 keys,
+   age X25519 identities, and age post-quantum (ML-KEM-768 + X25519)
+   identities. Each key type has its own application number (section 5.3), so
+   no two key types share a seed.
+3. Produce outputs identical to the reference implementations:
    - [bipsea](https://github.com/akarve/bipsea) for all applications that bipsea supports.
    - [ethankosakovsky/bip85](https://github.com/ethankosakovsky/bip85)
      (pycryptodome `RSA.generate`) for RSA.
-5. Build with Nix on `aarch64-darwin`, `x86_64-darwin`, `aarch64-linux`, and `x86_64-linux`.
+4. Build with Nix on `aarch64-darwin`, `x86_64-darwin`, `aarch64-linux`, and `x86_64-linux`.
 
 ## 3. Non-goals
 
 1. BIP-39 passphrases. The seed always uses the empty passphrase.
 2. Write access. The filesystem is read-only.
 3. Testnet output (TPRV). The input is a mnemonic, so the root key is always mainnet.
-4. The age post-quantum (X-Wing) identity flavor.
 
 ## 4. Command-line interface
 
@@ -80,24 +79,42 @@ subdirectories for every other key.
 
 | Path | Source | Listed |
 |---|---|---|
-| `/.ssh/id_ed25519`, `/.ssh/id_ed25519.pub` | seed `hex/32/0` | yes |
+| `/.ssh/id_ed25519`, `/.ssh/id_ed25519.pub` | Ed25519, index 0 | yes |
 | `/.ssh/id_rsa`, `/.ssh/id_rsa.pub` | `rsa/4096/0` | yes |
-| `/.ssh/ed25519/{index}/id_ed25519`, `.../id_ed25519.pub` | seed `hex/32/{index}` | index: no |
+| `/.ssh/ed25519/{index}/id_ed25519`, `.../id_ed25519.pub` | Ed25519 | index: no |
 | `/.ssh/rsa/{key_bits}/{key_index}/id_rsa`, `.../id_rsa.pub` | `rsa/{key_bits}/{key_index}` | key_bits: 2048, 3072, 4096 only; key_index: no |
 | `/.ssh/rsa/{key_bits}/{key_index}/{sub_key}/id_rsa`, `.../id_rsa.pub` | `rsa/{key_bits}/{key_index}/{sub_key}` | sub_key: yes |
-| `/.age/private.age`, `/.age/public.age` | `hex/32/0` | yes |
-| `/.age/x25519/{index}/private.age`, `.../public.age` | `hex/32/{index}` | index: no |
+| `/.age/private.age`, `/.age/public.age` | age X25519, index 0 | yes |
+| `/.age/x25519/{index}/private.age`, `.../public.age` | age X25519 | index: no |
+| `/.age/private-pq.age`, `/.age/public-pq.age` | age post-quantum, index 0 | yes |
+| `/.age/mlkem768x25519/{index}/private.age`, `.../public.age` | age post-quantum | index: no |
 | `/.gnupg/secret.asc`, `/.gnupg/public.asc` | `rsa/4096/0` and its sub keys 0, 1, 2 | yes, if `--gpg-user-id` |
 | `/.gnupg/rsa/{key_bits}/{key_index}/secret.asc`, `.../public.asc` | `rsa/{key_bits}/{key_index}` and its sub keys 0, 1, 2 | key_bits: 2048, 3072, 4096 only; key_index: no |
 
-**Caution:** `/.ssh/ed25519/{index}` and `/.age/x25519/{index}` use the same
-32 bytes, `hex/32/{index}`. The defaults `/.ssh/id_ed25519` and
-`/.age/private.age` are both index 0, so they are one secret: the OpenSSH
-Ed25519 file contains the seed, and the seed is the age identity. The user
-accepted this on 2026-09-28 (section 9.1). To keep SSH and age keys
-independent, use a different index for each.
+### 5.3 Application numbers of bixfuse
 
-### 5.3 Valid values
+BIP-85 v2.1.0 does not define these key types. bixfuse gives each one its
+own application number, as BIP-85 recommends: "Application numbers should be
+semantic in some way, such as a BIP number or ASCII character code sequence."
+As for RSA (`828365'` = ASCII `R` 82, `S` 83, `A` 65), the application number
+is the decimal ASCII codes of the application name. The next level names the
+key type, as the `{key_bits}'` level does for RSA.
+
+| Key type | Derivation path | Meaning of the numbers |
+|---|---|---|
+| OpenSSH Ed25519 | `m/83696968'/838372'/25519'/{index}'` | `SSH` = 83 83 72; curve 25519 |
+| age X25519 | `m/83696968'/657169'/25519'/{index}'` | `AGE` = 65 71 69; curve 25519 |
+| age post-quantum | `m/83696968'/657169'/768'/{index}'` | `AGE`; ML-KEM-768 (with X25519) |
+
+The seed of each key is the first 32 bytes of the 64 bytes of entropy.
+These paths are a bixfuse convention: other BIP-85 tools do not derive them.
+
+If BIP-85 adopts [bitcoin/bips#2174](https://github.com/bitcoin/bips/pull/2174)
+as it is (age keys from `hex/32/{index}`), bixfuse will change to the BIP-85
+paths. Then the age keys will share seeds with `hex/32/{index}`, and the
+documentation MUST tell careful users to use only one key per mnemonic.
+
+### 5.4 Valid values
 
 | Segment | Valid values |
 |---|---|
@@ -168,14 +185,19 @@ returns `EIO`.
    deterministic. The comment is empty. Base64 lines are 70 characters, as
    `ssh-keygen` writes them.
 2. `id_rsa.pub`: `ssh-rsa <base64 blob>`. `id_ed25519.pub`: `ssh-ed25519 <base64 blob>`.
-3. The Ed25519 seed (RFC 8032 private key) is the 32 bytes of `hex/32/{index}`.
+3. The Ed25519 seed (RFC 8032 private key) is the seed of section 5.3.
 
 ### 7.4 `/.age`: age keys
 
+The seed is the seed of section 5.3. The formats are those of the
+[age specification](https://github.com/C2SP/C2SP/blob/main/age.md).
+
 | File | Content |
 |---|---|
-| `private.age` | Uppercase Bech32 with HRP `AGE-SECRET-KEY-` of the 32 bytes of `hex/32/{index}`. |
-| `public.age` | Bech32 with HRP `age` of `X25519(those 32 bytes, basepoint)`. |
+| X25519 `private.age` | Uppercase Bech32 with HRP `AGE-SECRET-KEY-` of the seed. |
+| X25519 `public.age` | Bech32 with HRP `age` of `X25519(seed, basepoint)`. |
+| post-quantum `private.age`, `private-pq.age` | Uppercase Bech32 with HRP `AGE-SECRET-KEY-PQ-` of the seed. |
+| post-quantum `public.age`, `public-pq.age` | Bech32 with HRP `age1pq` of the 1216-byte X-Wing encapsulation key of the seed (draft-connolly-cfrg-xwing-kem-06; MLKEM768-X25519 of filippo.io/hpke-pq). The string has 1959 characters. As the age specification requires, Bech32 has no length limit here. |
 
 ### 7.5 `/.gnupg`: OpenPGP keys (RSA GPG)
 
@@ -223,16 +245,25 @@ The signatures can differ between tools.
    request (`hex/base64/32/0`) is not part of the derivation path.
 3. RSA GPG: full OpenPGP export, user ID from a command-line option.
 
-2026-09-28 (supersedes the 2026-09-27 age path `age/x25519/{index}/`):
+2026-09-28, first set (supersedes the 2026-09-27 age path `age/x25519/{index}/`):
 
 4. Application-specific encodings are in hidden directories `/.<app>`. The
    visible directories hold only strict BIP-85 applications.
 5. Hidden directories have flat default names (index 0; RSA 4096-bit,
    key_index 0) and indexed subdirectories.
-6. The Ed25519 SSH seed is `hex/32/{index}`, as for age.
-7. The shared secret of `/.ssh/id_ed25519` and `/.age/private.age` (both
-   `hex/32/0`) is accepted.
+6. (Superseded by 9.) The Ed25519 SSH seed is `hex/32/{index}`, as for age.
+7. (Superseded by 9.) The shared secret of `/.ssh/id_ed25519` and
+   `/.age/private.age` (both `hex/32/0`) is accepted.
 8. The visible RSA encoding is PKCS#1 PEM, in `private.pem`.
+
+2026-09-28, second set:
+
+9. Key types that BIP-85 does not define do not use `hex/32`. Each one has
+   its own application number (section 5.3), with a key-type level.
+10. Support age post-quantum identities, with flat defaults
+    `private-pq.age` and `public-pq.age`.
+11. If BIP-85 adopts bitcoin/bips#2174 as it is, bixfuse matches BIP-85, and
+    the documentation tells careful users to use one key per mnemonic.
 
 ### 9.2 Limits that are narrower than BIP-85
 
@@ -259,18 +290,21 @@ The signatures can differ between tools.
 2. The user's examples for the mnemonic `abandon ... about`:
    - `bip39/english/12/0` = `prosper short ramp prepare exchange stove life snack client enough purpose fold`
    - `hex/32/0` = `e477d4694160a384b28ee2f72b54edcf0822fd6e1ee1780447455cdbed8f8c45`
-3. age vector from bitcoin/bips#2174.
+3. age X25519 and post-quantum vectors from bitcoin/bips#2174, for the
+   encoding functions. For the bixfuse paths of section 5.3: vectors from
+   independent tools (entropy from bipsea, Ed25519 from Python
+   `cryptography`, age recipients from `age-keygen` 1.3.2).
 4. RSA: SHA-256 of `private.pem` without its trailing newline matches the
    reference vectors of ethankosakovsky/bip85 (2048-bit and 4096-bit).
 5. OpenSSH: `ssh-keygen -y` of `id_rsa`, `id_ed25519`, and `private.pem`
    equals the `.pub` line, and a `ssh-keygen -Y sign` signature verifies.
-   The Ed25519 public key equals an independent computation (Python
-   `cryptography`).
-6. OpenPGP: `gpg --import` succeeds, capabilities are C/E/A/S, signatures
+6. age: `age-keygen -y` of each identity equals its recipient, and a file
+   encrypted to each recipient decrypts with its identity.
+7. OpenPGP: `gpg --import` succeeds, capabilities are C/E/A/S, signatures
    check, and the primary fingerprint equals an independent computation.
-7. Mount test on Linux: `nix/vm-test.nix` (flake check `vm-test`). A normal
+8. Mount test on Linux: `nix/vm-test.nix` (flake check `vm-test`). A normal
    user mounts, reads every application, runs age-keygen, ssh-keygen, and gpg
    on the mounted files, and unmounts with `SIGTERM`.
-8. Mount test on macOS with macFUSE: pending. On 2026-09-27 the macFUSE
+9. Mount test on macOS with macFUSE: pending. On 2026-09-27 the macFUSE
    kernel extension was not enabled, and mounts failed with
    `Operation not permitted`.
