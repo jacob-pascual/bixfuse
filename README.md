@@ -8,7 +8,7 @@ a file is the BIP-85 derivation path of the secret. The hidden directories
 tools. [SPEC.md](SPEC.md) is the full specification.
 
 ```console
-$ bixfuse mnemonic.txt /mnt/bixfuse &
+$ echo "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" | bixfuse /mnt/bixfuse &
 $ cat /mnt/bixfuse/bip39/english/12/0
 prosper short ramp prepare exchange stove life snack client enough purpose fold
 $ cat /mnt/bixfuse/hex/32/0
@@ -16,9 +16,6 @@ e477d4694160a384b28ee2f72b54edcf0822fd6e1ee1780447455cdbed8f8c45
 $ cat /mnt/bixfuse/.ssh/id_ed25519.pub
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINcZp5MpnnfHtWuKtCgQIpI0CQQPbSVnpvgZO9BvDq/l
 ```
-
-`mnemonic.txt` holds the BIP-39 mnemonic
-`abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about`.
 
 ## Layout
 
@@ -72,8 +69,20 @@ RSA keys are computed on first access: 4096-bit keys take 1 to 6 seconds.
 ## Usage
 
 ```
-bixfuse [--gpg-user-id <USER_ID>] <MNEMONIC_FILE> <MOUNTPOINT>
+bixfuse [--mnemonic-file <PATH>] [--gpg-user-id <USER_ID>] <MOUNTPOINT>
 ```
+
+bixfuse takes the BIP-39 mnemonic from the first of these sources:
+
+1. Standard input, if it is not a terminal and is not empty.
+2. `--mnemonic-file <PATH>`.
+3. The first of these files that exists: `/etc/mnemonic`,
+   `$XDG_CONFIG_HOME/bixfuse/mnemonic` (default `~/.config/bixfuse/mnemonic`),
+   `./mnemonic`, `./mnemonic.txt`.
+
+A mnemonic on standard input together with `--mnemonic-file` is an error.
+When standard input is not a terminal, bixfuse reads it to the end. Where
+standard input stays open, as in `ssh host bixfuse ...`, add `< /dev/null`.
 
 bixfuse runs in the foreground. Press Ctrl-C, or send `SIGTERM`, to unmount.
 

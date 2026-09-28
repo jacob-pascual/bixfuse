@@ -27,9 +27,13 @@ pkgs.testers.runNixOSTest {
         machine.fail("su - alice -c " + shlex.quote(command))
 
     machine.wait_for_unit("multi-user.target")
-    alice("echo 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about' > mnemonic")
-    alice("mkdir mnt")
-    alice("setsid -f bixfuse --gpg-user-id 'Test <test@example.org>' mnemonic mnt > bixfuse.log 2>&1")
+    mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+    hex_32_0 = "e477d4694160a384b28ee2f72b54edcf0822fd6e1ee1780447455cdbed8f8c45\n"
+    alice(f"echo '{mnemonic}' > mnemonic")
+    alice("mkdir mnt mnt2")
+    # The mnemonic comes from ./mnemonic, a default file. The test driver's
+    # standard input is not a terminal and does not end, so redirect it.
+    alice("setsid -f bixfuse --gpg-user-id 'Test <test@example.org>' mnt < /dev/null > bixfuse.log 2>&1")
     # Only alice can stat the mount point: the mount does not use allow_other.
     mounted = "su - alice -c 'mountpoint -q mnt'"
     try:
@@ -40,7 +44,19 @@ pkgs.testers.runNixOSTest {
 
     with subtest("the examples of the first request"):
         assert alice("cat mnt/bip39/english/12/0") == "prosper short ramp prepare exchange stove life snack client enough purpose fold\n"
-        assert alice("cat mnt/hex/32/0") == "e477d4694160a384b28ee2f72b54edcf0822fd6e1ee1780447455cdbed8f8c45\n"
+        assert alice("cat mnt/hex/32/0") == hex_32_0
+
+    with subtest("mnemonic sources"):
+        alice(f"echo '{mnemonic}' | setsid -f bixfuse mnt2 > bixfuse2.log 2>&1")
+        machine.wait_until_succeeds("su - alice -c 'mountpoint -q mnt2'", timeout=timedelta(seconds=60))
+        assert alice("cat mnt2/hex/32/0") == hex_32_0
+        alice("fusermount3 -u mnt2")
+        machine.wait_until_fails("su - alice -c 'mountpoint -q mnt2'")
+
+        both = machine.fail("su - alice -c " + shlex.quote(f"echo '{mnemonic}' | bixfuse --mnemonic-file mnemonic mnt2 2>&1"))
+        assert "use only one" in both, both
+        none = machine.fail("su - alice -c " + shlex.quote("cd /tmp && bixfuse /home/alice/mnt2 < /dev/null 2>&1"))
+        assert "/etc/mnemonic, /home/alice/.config/bixfuse/mnemonic, ./mnemonic, ./mnemonic.txt" in none, none
 
     with subtest("listings"):
         # ls hides the hidden directories of the encodings; ls -A shows them.

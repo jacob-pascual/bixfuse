@@ -40,16 +40,35 @@ The filesystem root `/` is the BIP-85 root `m/83696968'`. It has two parts:
 ## 4. Command-line interface
 
 ```
-bixfuse [--gpg-user-id <USER_ID>] <MNEMONIC_FILE> <MOUNTPOINT>
+bixfuse [--mnemonic-file <PATH>] [--gpg-user-id <USER_ID>] <MOUNTPOINT>
 ```
 
-1. `MNEMONIC_FILE` holds one BIP-39 mnemonic (12, 15, 18, 21, or 24 words)
+1. The mnemonic is one BIP-39 mnemonic (12, 15, 18, 21, or 24 words)
    followed by a newline. bixfuse detects the wordlist language. bixfuse
    rejects a mnemonic with a bad checksum.
-2. `MOUNTPOINT` is an existing empty directory.
-3. `--gpg-user-id` sets the OpenPGP user ID, for example `"Alice <alice@example.org>"`.
+2. bixfuse takes the mnemonic from the first of these sources:
+   1. Standard input, if it is not a terminal and contains a non-whitespace
+      character. bixfuse reads standard input to the end of file. It never
+      reads a terminal, because a read from a background job (`&`) stops
+      the process.
+   2. `--mnemonic-file <PATH>`.
+   3. The first of these files that exists: `/etc/mnemonic`,
+      `$XDG_CONFIG_HOME/bixfuse/mnemonic`, `./mnemonic`, `./mnemonic.txt`.
+      If `$XDG_CONFIG_HOME` is not set or is not absolute, it is
+      `$HOME/.config` (XDG Base Directory Specification).
+3. If standard input gives a mnemonic and `--mnemonic-file` is given, bixfuse
+   stops with an error: the two sources can be two different seeds.
+4. If the chosen file cannot be read or holds no valid mnemonic, bixfuse
+   stops with an error. It does not try the next file.
+5. If no source gives a mnemonic, bixfuse stops with an error that lists
+   the files it tried.
+6. **Caution:** where standard input is an open pipe that does not end, for
+   example `ssh host bixfuse ...` without `-t`, bixfuse waits for the end of
+   file. Redirect standard input from `/dev/null` there.
+7. `MOUNTPOINT` is an existing empty directory.
+8. `--gpg-user-id` sets the OpenPGP user ID, for example `"Alice <alice@example.org>"`.
    When this option is absent, `/.gnupg` does not exist.
-4. bixfuse runs in the foreground. It unmounts on `SIGINT` or `SIGTERM`.
+9. bixfuse runs in the foreground. It unmounts on `SIGINT` or `SIGTERM`.
 
 ## 5. Filesystem layout
 
@@ -264,6 +283,12 @@ The signatures can differ between tools.
     `private-pq.age` and `public-pq.age`.
 11. If BIP-85 adopts bitcoin/bips#2174 as it is, bixfuse matches BIP-85, and
     the documentation tells careful users to use one key per mnemonic.
+
+2026-09-28, third set (supersedes the positional `MNEMONIC_FILE` argument):
+
+12. The mnemonic comes from standard input, `--mnemonic-file`, or a fixed
+    list of default files, in that order (section 4).
+13. A mnemonic on standard input together with `--mnemonic-file` is an error.
 
 ### 9.2 Limits that are narrower than BIP-85
 
