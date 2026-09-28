@@ -165,7 +165,9 @@ The signatures can differ between tools.
 4. Contents are computed on the first `lookup`, `getattr`, or `read` and kept
    in memory until unmount. File size is exact.
 5. The filesystem is single-threaded. RSA generation blocks other requests
-   until it completes.
+   until it completes. Measured on Apple Silicon (release build, 2026-09-27):
+   2048-bit 0.4 s, 3072-bit 0.9 s, 4096-bit 1.1 s to 5.9 s, 8192-bit 94 s.
+   The OpenPGP files need 4 keys.
 
 ## 9. Decisions and deviations
 

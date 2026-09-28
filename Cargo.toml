@@ -19,3 +19,7 @@ sha2 = "0.11.0"
 shake = "0.1.0"
 unicode-normalization = "0.1"
 x25519-dalek = "3.0.0"
+
+# RSA key generation is slow without optimization, also in tests.
+[profile.dev.package.num-bigint]
+opt-level = 3
