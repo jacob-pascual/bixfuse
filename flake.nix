@@ -1,10 +1,21 @@
 {
   description = "bixfuse: a read-only FUSE filesystem of BIP-85 derived secrets";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Only for the test of the home-manager module.
+    home-manager = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      home-manager,
+    }:
     let
       systems = [
         "aarch64-darwin"
@@ -19,6 +30,10 @@
         default = pkgs.callPackage ./package.nix { };
       });
 
+      nixosModules.default = import ./nix/nixos-module.nix self;
+      homeManagerModules.default = import ./nix/home-manager-module.nix self;
+      homeModules.default = self.homeManagerModules.default;
+
       checks = forAllSystems (
         pkgs:
         let
@@ -29,6 +44,7 @@
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           vm-test = import ./nix/vm-test.nix { inherit pkgs bixfuse; };
+          module-test = import ./nix/module-test.nix { inherit pkgs self home-manager; };
         }
       );
 

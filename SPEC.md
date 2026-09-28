@@ -39,8 +39,11 @@ The filesystem root `/` is the BIP-85 root `m/83696968'`. It has two parts:
 ## 4. Command-line interface
 
 ```
-bixfuse [--mnemonic-file <PATH>] [--passphrase-file <PATH>]
-        [--gpg-name <NAME>] [--gpg-email <EMAIL>] <MOUNTPOINT>
+bixfuse [OPTIONS] <MOUNTPOINT>
+bixfuse [OPTIONS] cat <PATH>...
+
+OPTIONS: [--mnemonic-file <PATH>] [--passphrase-file <PATH>]
+         [--gpg-name <NAME>] [--gpg-email <EMAIL>]
 ```
 
 1. The mnemonic is one BIP-39 mnemonic (12, 15, 18, 21, or 24 words)
@@ -74,6 +77,10 @@ bixfuse [--mnemonic-file <PATH>] [--passphrase-file <PATH>]
    the files do. So the `/.gnupg` files differ between users and hosts.
 7. `MOUNTPOINT` is an existing empty directory.
 8. bixfuse runs in the foreground. It unmounts on `SIGINT` or `SIGTERM`.
+9. `cat <PATH>...` does not mount. It writes the contents of each file to
+   standard output, in order. `PATH` is a path of section 5, with or without
+   a leading `/`. For a path that is not a file, bixfuse stops with an error
+   and a non-zero exit status. The Nix modules (section 10) use `cat`.
 
 ## 5. Filesystem layout
 
@@ -307,6 +314,19 @@ The signatures can differ between tools.
     come from the user database and the host name, so `/.gnupg` always
     exists.
 
+2026-09-28, fifth set:
+
+17. A NixOS module and a home-manager module (section 10) install secrets
+    in the style of sops-nix and agenix. A secret is `type.<kind>` or
+    `derivation`, and `derivation` is a path of section 5.
+18. `bixfuse cat` prints files without a mount; the modules use it.
+19. home-manager: `bixfuse.user.name` and `bixfuse.user.email` set the git
+    identity and the OpenPGP user ID.
+20. `programs.sshd` writes Ed25519 and RSA-4096 host keys of
+    `bixfuse.programs.sshd.index` (default 0).
+21. The modules never replace a key file with different contents.
+22. Option names use `enable` (NixOS convention), not `enabled`.
+
 ### 9.2 Limits that are narrower than BIP-85
 
 1. `rolls` is at most 10000, as in bipsea. BIP-85 allows 2^32 - 1. A larger
@@ -326,7 +346,112 @@ The signatures can differ between tools.
    `sides` give the same result (checked for every `sides` < 2^17 and every
    power of two up to 2^32).
 
-## 10. Test plan
+## 10. Nix modules
+
+### 10.1 Purpose
+
+One mnemonic is one identity: a host has one mnemonic (`/etc/mnemonic`), and
+a user has one mnemonic (`~/.config/bixfuse/mnemonic`). Every key and
+secret of that host or user derives from its mnemonic. The NixOS module
+installs the secrets of a host; the home-manager module installs the
+secrets of a user. Neither module mounts the FUSE filesystem: both call
+`bixfuse cat` (section 4). The design follows sops-nix and agenix.
+
+The flake exports `nixosModules.default` and `homeManagerModules.default`.
+The mnemonic file MUST NOT be in the Nix store, so `mnemonicFile` is a
+string, and a path in the Nix store is an evaluation error.
+
+### 10.2 Secrets (both modules)
+
+`bixfuse.secrets.<name>` has these options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `type.<kind>` | none | The secret as a typed value (table below). |
+| `derivation` | none | The secret as a path of section 5, for example `"bip39/english/12/0"`. |
+| `path` | `<secretsDir>/<name>` | The path to use in other options. If it is not in `secretsDir`, it is a symlink to `<secretsDir>/<name>`. |
+| `mode` | `"0400"` | The file mode. |
+| `owner`, `group` (NixOS only) | `"root"`, `"root"` | The owner of the file. |
+
+Exactly one of `type.<kind>` and `derivation` MUST be set. `type.<kind>`
+only builds a path of section 5:
+
+| `type.<kind>` | Attributes (defaults) | Path |
+|---|---|---|
+| `bip39` | `language` ("english"), `words` (12), `index` (0) | `bip39/{language}/{words}/{index}` |
+| `wif`, `xprv` | `index` (0) | `wif/{index}`, `xprv/{index}` |
+| `hex` | `bytes` (32), `index` (0) | `hex/{bytes}/{index}` |
+| `base64`, `base85` | `length` (required), `index` (0) | `base64/{length}/{index}`, `base85/{length}/{index}` |
+| `dice` | `sides` (6), `rolls` (required), `index` (0) | `dice/{sides}/{rolls}/{index}` |
+| `nostr` | `identity` (1), `account` (1) | `nostr/{identity}/{account}` |
+| `rsa` | `bits` (4096), `index` (0), `subKey` (null) | `rsa/{bits}/{index}[/{subKey}]/private.pem` |
+| `sshEd25519` | `index` (0), `public` (false) | `.ssh/ed25519/{index}/id_ed25519[.pub]` |
+| `sshRsa` | `bits` (4096), `index` (0), `subKey` (null), `public` (false) | `.ssh/rsa/{bits}/{index}[/{subKey}]/id_rsa[.pub]` |
+| `age` | `index` (0), `public` (false) | `.age/x25519/{index}/{private,public}.age` |
+| `agePq` | `index` (0), `public` (false) | `.age/mlkem768x25519/{index}/{private,public}.age` |
+| `gpg` | `bits` (4096), `index` (0), `public` (false) | `.gnupg/rsa/{bits}/{index}/{secret,public}.asc` |
+
+Secrets are written to a new generation directory
+`<secretsMountPoint>/<generation>`, and then `secretsDir` becomes a symlink
+to it; the previous generation is removed. If `bixfuse cat` fails for a
+secret, installation stops with an error.
+
+### 10.3 NixOS module
+
+| Option | Default |
+|---|---|
+| `bixfuse.package` | the bixfuse package of the flake |
+| `bixfuse.mnemonicFile` | `"/etc/mnemonic"` |
+| `bixfuse.secretsDir` | `"/run/bixfuse"` |
+| `bixfuse.secretsMountPoint` | `"/run/bixfuse.d"` (a `ramfs`, mode 0751) |
+| `bixfuse.programs.enable` | `false` |
+| `bixfuse.programs.sshd.enable` | `bixfuse.programs.enable` |
+| `bixfuse.programs.sshd.index` | `0` |
+
+1. An activation script installs the secrets after `/etc` is set up. A
+   second activation script sets owner and group after users and groups
+   exist.
+2. `programs.sshd` writes these host keys at activation:
+
+   | File | Path of section 5 | Mode |
+   |---|---|---|
+   | `/etc/ssh/ssh_host_ed25519_key` | `.ssh/ed25519/{index}/id_ed25519` | 0600 |
+   | `/etc/ssh/ssh_host_ed25519_key.pub` | `.ssh/ed25519/{index}/id_ed25519.pub` | 0644 |
+   | `/etc/ssh/ssh_host_rsa_key` | `.ssh/rsa/4096/{index}/id_rsa` | 0600 |
+   | `/etc/ssh/ssh_host_rsa_key.pub` | `.ssh/rsa/4096/{index}/id_rsa.pub` | 0644 |
+
+3. `programs.sshd` sets `services.openssh.generateHostKeys` to false with
+   `mkDefault`. If it is true anyway, evaluation fails with an assertion.
+4. If a host key file exists with different contents, activation stops with
+   an error that names the file. bixfuse never replaces a different key.
+
+### 10.4 home-manager module
+
+| Option | Default |
+|---|---|
+| `bixfuse.package` | the bixfuse package of the flake |
+| `bixfuse.mnemonicFile` | `"${config.xdg.configHome}/bixfuse/mnemonic"` |
+| `bixfuse.user.name`, `bixfuse.user.email` | `null` |
+| `bixfuse.secretsDir` | `"${XDG_RUNTIME_DIR}/bixfuse"` |
+| `bixfuse.secretsMountPoint` | `"${XDG_RUNTIME_DIR}/bixfuse.d"` |
+| `bixfuse.programs.enable` | `false` |
+| `bixfuse.programs.ssh.enable` | `bixfuse.programs.enable` |
+| `bixfuse.programs.git.enable` | `bixfuse.programs.enable` |
+
+1. The systemd user service `bixfuse-secrets.service` installs the secrets
+   at login and at each activation. It needs systemd, so secrets are
+   available on Linux only; on macOS a secret is an evaluation error.
+2. `bixfuse.user.name` and `bixfuse.user.email`, if set, are passed to
+   `bixfuse cat` as `--gpg-name` and `--gpg-email`.
+3. `programs.ssh` writes `~/.ssh/id_ed25519` (0600) and
+   `~/.ssh/id_ed25519.pub` (0644) from `.ssh/id_ed25519` and
+   `.ssh/id_ed25519.pub` at activation. If a file exists with different
+   contents, activation stops with an error that names the file.
+4. `programs.git` sets `programs.git.settings.user.name` and
+   `programs.git.settings.user.email` to `bixfuse.user.name` and
+   `bixfuse.user.email`. Both MUST be set (assertion).
+
+## 11. Test plan
 
 1. BIP-85 test vectors (all applications), from the BIP text and bipsea.
 2. The BIP-39 passphrase vector ("TREZOR") of trezor/python-mnemonic, and
@@ -351,6 +476,12 @@ The signatures can differ between tools.
    on the mounted files, and unmounts with `SIGTERM`. It also checks
    `--mnemonic-file -`, the default mnemonic files, `--passphrase-file`, the
    input errors, the default OpenPGP user ID, and `--gpg-name`/`--gpg-email`.
-10. Mount test on macOS with macFUSE: pending. On 2026-09-27 the macFUSE
+10. Module test: `nix/module-test.nix` (flake check `module-test`). A host
+    with its own mnemonic installs typed and `derivation` secrets with owner,
+    group, mode, and a custom path; writes SSH host keys that sshd serves;
+    refuses to replace a changed host key. A user with another mnemonic gets
+    `~/.ssh/id_ed25519`, the git identity, and a secret from the systemd user
+    service. Passed on `aarch64-linux` (2026-09-28).
+11. Mount test on macOS with macFUSE: pending. On 2026-09-27 the macFUSE
    kernel extension was not enabled, and mounts failed with
    `Operation not permitted`.

@@ -69,9 +69,12 @@ RSA keys are computed on first access: 4096-bit keys take 1 to 6 seconds.
 ## Usage
 
 ```
-bixfuse [--mnemonic-file <PATH>] [--passphrase-file <PATH>]
-        [--gpg-name <NAME>] [--gpg-email <EMAIL>] <MOUNTPOINT>
+bixfuse [OPTIONS] <MOUNTPOINT>
+bixfuse [OPTIONS] cat <PATH>...
 ```
+
+`cat` writes files of the filesystem to standard output without a mount,
+for example `bixfuse cat .ssh/id_ed25519.pub`.
 
 | Option | Meaning |
 |---|---|
@@ -85,6 +88,51 @@ Without `--mnemonic-file`, bixfuse uses the first of these files that exists:
 `~/.config/bixfuse/mnemonic`), `./mnemonic`, `./mnemonic.txt`.
 
 bixfuse runs in the foreground. Press Ctrl-C, or send `SIGTERM`, to unmount.
+
+## NixOS and home-manager
+
+One mnemonic is one identity: a host has `/etc/mnemonic`, a user has
+`~/.config/bixfuse/mnemonic`, and every key of that host or user derives from
+it. The modules install secrets in the style of
+[sops-nix](https://github.com/Mic92/sops-nix) and
+[agenix](https://github.com/ryantm/agenix). They do not mount the filesystem;
+they call `bixfuse cat`. [SPEC.md](SPEC.md) section 10 lists every option.
+
+```nix
+{
+  inputs.bixfuse.url = "github:jacob-pascual/bixfuse";
+
+  # NixOS
+  imports = [ inputs.bixfuse.nixosModules.default ];
+  bixfuse = {
+    programs.enable = true; # SSH host keys in /etc/ssh from /etc/mnemonic
+    secrets.drone-user = {
+      type.bip39 = { language = "english"; words = 12; index = 0; };
+      owner = config.systemd.services.drone-server.serviceConfig.User;
+      group = config.systemd.services.drone-server.serviceConfig.Group;
+      mode = "0440";
+    };
+    secrets.buildkite-token.derivation = "base85/40/0"; # a path of the filesystem
+  };
+  services.buildkite-agents.builder.tokenPath = config.bixfuse.secrets.buildkite-token.path;
+
+  # home-manager
+  imports = [ inputs.bixfuse.homeManagerModules.default ];
+  bixfuse = {
+    programs.enable = true; # ~/.ssh/id_ed25519 and the git identity
+    user = { name = "Alice Liddell"; email = "alice@example.org"; };
+    secrets.age-recipient.type.age.public = true;
+  };
+}
+```
+
+| Module | Secrets | Programs |
+|---|---|---|
+| NixOS | `/run/bixfuse/<name>` (ramfs), with `owner`, `group`, `mode` | `programs.sshd`: `/etc/ssh/ssh_host_{ed25519,rsa}_key[.pub]`; sets `services.openssh.generateHostKeys = false` |
+| home-manager | `$XDG_RUNTIME_DIR/bixfuse/<name>` (systemd user service, Linux only), with `mode` | `programs.ssh`: `~/.ssh/id_ed25519[.pub]`; `programs.git`: `user.name` and `user.email` |
+
+The modules never replace a key file with different contents: remove the old
+file first. The mnemonic file must not be in the Nix store.
 
 ## Install
 
