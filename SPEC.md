@@ -158,7 +158,10 @@ The signatures can differ between tools.
 
 ## 8. Filesystem behavior
 
-1. Mount options: read-only, filesystem name `bixfuse`.
+1. Mount options: read-only, filesystem name `bixfuse`, `default_permissions`.
+   On Linux, a normal user needs a setuid `fusermount3` on `PATH`
+   (NixOS: `programs.fuse.enable = true`). On macOS, bixfuse uses the
+   default macFUSE backend (the kernel extension).
 2. File mode `0400`, directory mode `0500`, owner = the user that mounts.
 3. `ls` shows only the "Listed" entries of section 5. A lookup of any valid
    unlisted name succeeds. A lookup of an invalid name returns `ENOENT`.
@@ -210,4 +213,10 @@ The signatures can differ between tools.
 5. OpenSSH: `ssh-keygen -y -f openssh-key-v1` equals `openssh-key-v1.pub`.
 6. OpenPGP: `gpg --import` succeeds, capabilities are C/E/A/S, signatures
    check, and the primary fingerprint equals an independent computation.
-7. Mount test: NixOS VM test on Linux, manual test on macOS with macFUSE.
+7. Mount test on Linux: `nix/vm-test.nix` (flake check `vm-test`). A normal
+   user mounts, reads every application, runs age-keygen, ssh-keygen, and gpg
+   on the mounted files, and unmounts with `SIGTERM`. Passed on
+   `aarch64-linux` (2026-09-28).
+8. Mount test on macOS with macFUSE: pending. On 2026-09-27 the macFUSE
+   kernel extension was not enabled, and mounts failed with
+   `Operation not permitted`.

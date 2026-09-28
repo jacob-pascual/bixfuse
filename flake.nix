@@ -19,6 +19,19 @@
         default = pkgs.callPackage ./package.nix { };
       });
 
+      checks = forAllSystems (
+        pkgs:
+        let
+          bixfuse = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        in
+        {
+          package = bixfuse;
+        }
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          vm-test = import ./nix/vm-test.nix { inherit pkgs bixfuse; };
+        }
+      );
+
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           inputsFrom = [ self.packages.${pkgs.stdenv.hostPlatform.system}.default ];
