@@ -6,6 +6,8 @@
 //! DRNG bytes in the same order and gets the same keys. Each function names
 //! the pycryptodome function that it ports.
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use num_bigint::BigUint;
 use num_integer::Integer;
 
@@ -21,6 +23,59 @@ pub struct RsaKey {
     pub p: BigUint,
     pub q: BigUint,
     pub u: BigUint,
+}
+
+/// A DER element with a definite length.
+fn der(tag: u8, body: &[u8]) -> Vec<u8> {
+    let mut out = vec![tag];
+    let len = body.len();
+    if len < 0x80 {
+        out.push(len as u8);
+    } else {
+        let len_bytes: Vec<u8> = len
+            .to_be_bytes()
+            .into_iter()
+            .skip_while(|b| *b == 0)
+            .collect();
+        out.push(0x80 | len_bytes.len() as u8);
+        out.extend(len_bytes);
+    }
+    out.extend(body);
+    out
+}
+
+fn der_int(x: &BigUint) -> Vec<u8> {
+    let mut bytes = x.to_bytes_be();
+    if bytes[0] & 0x80 != 0 {
+        bytes.insert(0, 0);
+    }
+    der(0x02, &bytes)
+}
+
+impl RsaKey {
+    /// The PKCS#1 PEM encoding, the same text as pycryptodome
+    /// `export_key(format='PEM', pkcs=1)`, without a trailing newline.
+    pub fn to_pkcs1_pem(&self) -> String {
+        let fields = [
+            BigUint::ZERO,
+            self.n.clone(),
+            self.e.clone(),
+            self.d.clone(),
+            self.p.clone(),
+            self.q.clone(),
+            &self.d % (&self.p - 1u32),
+            &self.d % (&self.q - 1u32),
+            self.q.modinv(&self.p).unwrap(),
+        ];
+        let body: Vec<u8> = fields.iter().flat_map(der_int).collect();
+        let der = der(0x30, &body);
+        let mut pem = String::from("-----BEGIN RSA PRIVATE KEY-----\n");
+        for chunk in der.chunks(48) {
+            pem += &STANDARD.encode(chunk);
+            pem += "\n";
+        }
+        pem + "-----END RSA PRIVATE KEY-----"
+    }
 }
 
 /// `Crypto.PublicKey.RSA.generate`
@@ -226,62 +281,12 @@ pub(crate) mod tests {
     use super::*;
     use crate::bip85::Root;
     use crate::bip85::tests::root;
-    use base64::Engine;
     use sha2::{Digest, Sha256};
-
-    fn der(tag: u8, body: &[u8]) -> Vec<u8> {
-        let mut out = vec![tag];
-        let len = body.len();
-        if len < 0x80 {
-            out.push(len as u8);
-        } else {
-            let len_bytes: Vec<u8> = len
-                .to_be_bytes()
-                .into_iter()
-                .skip_while(|b| *b == 0)
-                .collect();
-            out.push(0x80 | len_bytes.len() as u8);
-            out.extend(len_bytes);
-        }
-        out.extend(body);
-        out
-    }
-
-    fn der_int(x: &BigUint) -> Vec<u8> {
-        let mut bytes = x.to_bytes_be();
-        if bytes[0] & 0x80 != 0 {
-            bytes.insert(0, 0);
-        }
-        der(0x02, &bytes)
-    }
-
-    /// pycryptodome `export_key(format='PEM', pkcs=1)`.
-    fn pkcs1_pem(key: &RsaKey) -> String {
-        let fields = [
-            BigUint::ZERO,
-            key.n.clone(),
-            key.e.clone(),
-            key.d.clone(),
-            key.p.clone(),
-            key.q.clone(),
-            &key.d % (&key.p - 1u32),
-            &key.d % (&key.q - 1u32),
-            key.q.modinv(&key.p).unwrap(),
-        ];
-        let body: Vec<u8> = fields.iter().flat_map(der_int).collect();
-        let der = der(0x30, &body);
-        let mut pem = String::from("-----BEGIN RSA PRIVATE KEY-----\n");
-        for chunk in der.chunks(48) {
-            pem += &base64::engine::general_purpose::STANDARD.encode(chunk);
-            pem += "\n";
-        }
-        pem + "-----END RSA PRIVATE KEY-----"
-    }
 
     fn pem_sha256(root: &Root, path: &[u32], bits: u64) -> String {
         let mut drng = Drng::new(&root.entropy(path).unwrap());
         let key = generate(bits, &mut drng);
-        Sha256::digest(pkcs1_pem(&key).as_bytes())
+        Sha256::digest(key.to_pkcs1_pem().as_bytes())
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect()

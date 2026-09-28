@@ -56,37 +56,62 @@ fn rsa_key(path: &[u32], bits: u64) -> rsa::RsaKey {
     rsa::generate(bits, &mut Drng::new(&root.entropy(path).unwrap()))
 }
 
-#[test]
-fn ssh_keygen_reads_the_private_key() {
-    let key = rsa_key(&[828365, 2048, 0], 2048);
-    let dir = TempDir::new("ssh");
-    let private = dir.write("id_rsa", &format!("{}\n", openssh::private_key(&key)));
-    let public = dir.write("id_rsa.pub", &format!("{}\n", openssh::public_key(&key)));
+/// Checks that ssh-keygen derives `public` from `private`, and that a
+/// signature with `private` verifies with `public`.
+fn check_ssh_key_pair(name: &str, private: &str, public: &str) {
+    let dir = TempDir::new(name);
+    let private_path = dir.write("key", &format!("{private}\n"));
+    let public_path = dir.write("key.pub", &format!("{public}\n"));
 
     let derived = run(
-        Command::new("ssh-keygen").arg("-y").arg("-f").arg(&private),
+        Command::new("ssh-keygen")
+            .arg("-y")
+            .arg("-f")
+            .arg(&private_path),
         b"",
     );
-    assert_eq!(derived, format!("{}\n", openssh::public_key(&key)));
+    assert_eq!(derived, format!("{public}\n"), "{name}");
 
-    // A signature with the private key verifies with the public key, so
-    // d, p, q, and iqmp are consistent with n and e.
     let message = b"bixfuse\n";
     let signature = run(
         Command::new("ssh-keygen")
             .args(["-Y", "sign", "-n", "file", "-f"])
-            .arg(&private),
+            .arg(&private_path),
         message,
     );
     let signature = dir.write("message.sig", &signature);
     run(
         Command::new("ssh-keygen")
             .args(["-Y", "check-novalidate", "-n", "file", "-f"])
-            .arg(&public)
+            .arg(&public_path)
             .arg("-s")
             .arg(&signature),
         message,
     );
+}
+
+#[test]
+fn ssh_keygen_reads_the_rsa_keys() {
+    let key = rsa_key(&[828365, 2048, 0], 2048);
+    let public = openssh::rsa_public_key(&key);
+    // The signature checks that d, p, q, and iqmp are consistent with n and e.
+    check_ssh_key_pair("ssh-rsa", &openssh::rsa_private_key(&key), &public);
+    // ssh-keygen also reads the PKCS#1 PEM of the visible rsa directory.
+    check_ssh_key_pair("ssh-rsa-pem", &key.to_pkcs1_pem(), &public);
+}
+
+#[test]
+fn ssh_keygen_reads_the_ed25519_keys() {
+    let root = Root::from_mnemonic(MNEMONIC).unwrap();
+    for index in [0, 1] {
+        let entropy = root.entropy(&[128169, 32, index]).unwrap();
+        let seed: [u8; 32] = entropy[..32].try_into().unwrap();
+        check_ssh_key_pair(
+            &format!("ssh-ed25519-{index}"),
+            &openssh::ed25519_private_key(&seed),
+            &openssh::ed25519_public_key(&seed),
+        );
+    }
 }
 
 /// Runs gpg with its own home directory and returns its standard output.
@@ -152,7 +177,7 @@ fn gpg_imports_and_uses_the_keys() {
     // The authentication sub key is the same key as sub key 1 in OpenSSH form.
     let ssh = gpg(&secret_home, &["--export-ssh-key", want[0]], b"");
     let ssh: Vec<&str> = ssh.split_whitespace().take(2).collect();
-    assert_eq!(ssh.join(" "), openssh::public_key(&subkeys[1]));
+    assert_eq!(ssh.join(" "), openssh::rsa_public_key(&subkeys[1]));
 
     let message = b"bixfuse\n";
     let signed = gpg(

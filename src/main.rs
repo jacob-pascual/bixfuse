@@ -12,7 +12,7 @@ use fuser::{Config, MountOption, Session};
 #[command(version)]
 struct Args {
     /// OpenPGP user ID for the RSA GPG files, for example "Alice <alice@example.org>".
-    /// Without it, the files openpgp-secret.asc and openpgp-public.asc do not exist.
+    /// Without it, the directory .gnupg does not exist.
     #[arg(long, value_name = "USER_ID")]
     gpg_user_id: Option<String>,
 

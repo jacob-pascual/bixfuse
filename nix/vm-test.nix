@@ -43,33 +43,50 @@ pkgs.testers.runNixOSTest {
         assert alice("cat mnt/hex/32/0") == "e477d4694160a384b28ee2f72b54edcf0822fd6e1ee1780447455cdbed8f8c45\n"
 
     with subtest("listings"):
-        assert alice("ls mnt").split() == ["age", "base64", "base85", "bip39", "dice", "hex", "nostr", "rsa", "wif", "xprv"]
-        assert alice("ls mnt/rsa/2048/0").split() == [
-            "0", "1", "2", "openpgp-public.asc", "openpgp-secret.asc", "openssh-key-v1", "openssh-key-v1.pub",
+        # ls hides the hidden directories of the encodings; ls -A shows them.
+        assert alice("ls mnt").split() == ["base64", "base85", "bip39", "dice", "hex", "nostr", "rsa", "wif", "xprv"]
+        assert sorted(alice("ls -A mnt").split()) == [
+            ".age", ".gnupg", ".ssh", "base64", "base85", "bip39", "dice", "hex", "nostr", "rsa", "wif", "xprv",
         ]
-        assert alice("ls mnt/age/x25519/5").split() == ["private.age", "public.age"]
+        assert sorted(alice("ls mnt/rsa/2048/0").split()) == ["0", "1", "2", "private.pem"]
+        assert sorted(alice("ls -A mnt/.ssh").split()) == [
+            "ed25519", "id_ed25519", "id_ed25519.pub", "id_rsa", "id_rsa.pub", "rsa",
+        ]
+        assert sorted(alice("ls -A mnt/.age").split()) == ["private.age", "public.age", "x25519"]
+        assert sorted(alice("ls -A mnt/.gnupg").split()) == ["public.asc", "rsa", "secret.asc"]
 
-    with subtest("every application"):
+    with subtest("every file kind"):
         for path in [
             "bip39/czech/24/3", "wif/0", "xprv/0", "base64/20/0", "base85/80/0",
-            "dice/6/10/0", "nostr/1/1", "rsa/2048/0/1/openssh-key-v1.pub",
+            "dice/6/10/0", "nostr/1/1", "rsa/2048/0/1/private.pem",
+            ".ssh/ed25519/1/id_ed25519.pub", ".ssh/rsa/2048/0/2/id_rsa.pub",
+            ".age/x25519/1/public.age", ".gnupg/rsa/2048/0/public.asc",
         ]:
             text = alice(f"cat mnt/{path}")
             assert len(text) > 1 and text.endswith("\n"), path
+
+    with subtest("flat defaults are index 0"):
+        assert alice("cat mnt/.ssh/id_ed25519") == alice("cat mnt/.ssh/ed25519/0/id_ed25519")
+        assert alice("cat mnt/.age/public.age") == alice("cat mnt/.age/x25519/0/public.age")
+        assert alice("cat mnt/.ssh/id_rsa.pub") == alice("cat mnt/.ssh/rsa/4096/0/id_rsa.pub")
 
     with subtest("attributes"):
         assert alice("stat -c '%a %U %s' mnt/hex/32/0").strip() == "400 alice 65"
         assert alice("stat -c '%a %F' mnt/hex/32").strip() == "500 directory"
 
     with subtest("reference tools read the key files"):
-        assert alice("age-keygen -y mnt/age/x25519/0/private.age") == alice("cat mnt/age/x25519/0/public.age")
-        assert alice("ssh-keygen -y -f mnt/rsa/2048/0/openssh-key-v1") == alice("cat mnt/rsa/2048/0/openssh-key-v1.pub")
-        alice("gpg --batch --import mnt/rsa/2048/0/openpgp-secret.asc")
+        assert alice("age-keygen -y mnt/.age/private.age") == alice("cat mnt/.age/public.age")
+        assert alice("ssh-keygen -y -f mnt/.ssh/id_ed25519") == alice("cat mnt/.ssh/id_ed25519.pub")
+        assert alice("ssh-keygen -y -f mnt/.ssh/rsa/2048/0/id_rsa") == alice("cat mnt/.ssh/rsa/2048/0/id_rsa.pub")
+        assert alice("ssh-keygen -y -f mnt/rsa/2048/0/private.pem") == alice("cat mnt/.ssh/rsa/2048/0/id_rsa.pub")
+        alice("gpg --batch --import mnt/.gnupg/rsa/2048/0/secret.asc")
         assert "fpr:::::::::ECC1557BE1B91255FAC1BB370ABFE55998DF2870:" in alice("gpg --batch --with-colons --list-secret-keys")
 
     with subtest("missing paths, writes, and other users fail"):
         alice_fails("cat mnt/hex/base64/32/0")
         alice_fails("cat mnt/hex/32/007")
+        alice_fails("cat mnt/age/x25519/0/private.age")
+        alice_fails("cat mnt/rsa/2048/0/openssh-key-v1")
         alice_fails("touch mnt/hex/32/new")
         machine.fail("cat /home/alice/mnt/hex/32/0")
 
