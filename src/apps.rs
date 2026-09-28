@@ -371,6 +371,7 @@ mod tests {
     fn abandon_about_examples() {
         let r = Root::from_mnemonic(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+            "",
         )
         .unwrap();
         assert_eq!(

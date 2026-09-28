@@ -52,7 +52,7 @@ impl Drop for TempDir {
 }
 
 fn rsa_key(path: &[u32], bits: u64) -> rsa::RsaKey {
-    let root = Root::from_mnemonic(MNEMONIC).unwrap();
+    let root = Root::from_mnemonic(MNEMONIC, "").unwrap();
     rsa::generate(bits, &mut Drng::new(&root.entropy(path).unwrap()))
 }
 
@@ -102,7 +102,7 @@ fn ssh_keygen_reads_the_rsa_keys() {
 
 #[test]
 fn ssh_keygen_reads_the_ed25519_keys() {
-    let root = Root::from_mnemonic(MNEMONIC).unwrap();
+    let root = Root::from_mnemonic(MNEMONIC, "").unwrap();
     for index in [0, 1] {
         // m/83696968'/838372'/25519'/{index}' (SPEC.md section 5.3)
         let entropy = root.entropy(&[838372, 25519, index]).unwrap();
@@ -248,7 +248,7 @@ fn check_age_key_pair(name: &str, identity: &str, recipient: &str) {
 
 #[test]
 fn age_reads_the_keys() {
-    let root = Root::from_mnemonic(MNEMONIC).unwrap();
+    let root = Root::from_mnemonic(MNEMONIC, "").unwrap();
     for index in [0, 1, 2147483647] {
         // m/83696968'/657169'/25519'/{index}' and m/83696968'/657169'/768'/{index}'
         let x25519 = root.entropy(&[657169, 25519, index]).unwrap();

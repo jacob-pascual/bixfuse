@@ -297,6 +297,7 @@ pub(crate) mod tests {
     fn reference_2048_mnemonic() {
         let root = Root::from_mnemonic(
             "install scatter logic circle pencil average fall shoe quantum disease suspect usage",
+            "",
         )
         .unwrap();
         assert_eq!(

@@ -22,12 +22,12 @@ pub struct Root {
 }
 
 impl Root {
-    /// The root of a BIP-39 mnemonic with the empty passphrase.
-    /// The wordlist language is detected.
-    pub fn from_mnemonic(phrase: &str) -> Result<Self, bip39::Error> {
+    /// The root of a BIP-39 mnemonic and passphrase. The wordlist language
+    /// is detected. The passphrase is normalized to NFKD, as BIP-39 requires.
+    pub fn from_mnemonic(phrase: &str, passphrase: &str) -> Result<Self, bip39::Error> {
         let mnemonic = bip39::Mnemonic::parse_normalized(phrase)?;
         Ok(Self::from_master(
-            Xpriv::new_master(NetworkKind::Main, &mnemonic.to_seed(""))
+            Xpriv::new_master(NetworkKind::Main, &mnemonic.to_seed(passphrase))
                 .expect("a 64-byte seed is a valid BIP-32 seed"),
         ))
     }
@@ -120,6 +120,7 @@ pub(crate) mod tests {
     fn mnemonic_root() {
         let root = Root::from_mnemonic(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\n",
+            "",
         )
         .unwrap();
         assert_eq!(
@@ -128,11 +129,27 @@ pub(crate) mod tests {
         );
     }
 
+    /// The first English vector of BIP-39 (trezor/python-mnemonic
+    /// vectors.json), with the passphrase "TREZOR".
+    #[test]
+    fn mnemonic_with_passphrase() {
+        let root = Root::from_mnemonic(
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+            "TREZOR",
+        )
+        .unwrap();
+        assert_eq!(
+            root.master.to_string(),
+            "xprv9s21ZrQH143K3h3fDYiay8mocZ3afhfULfb5GX8kCBdno77K4HiA15Tg23wpbeF1pLfs1c5SPmYHrEpTuuRhxMwvKDwqdKiGJS9XFKzUsAF"
+        );
+    }
+
     #[test]
     fn mnemonic_bad_checksum() {
         assert!(
             Root::from_mnemonic(
-                "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon"
+                "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon",
+                ""
             )
             .is_err()
         );

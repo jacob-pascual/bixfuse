@@ -62,6 +62,7 @@ const LANGUAGES: [(&str, Language, u32); 10] = [
     ("portuguese", Language::Portuguese, 9),
 ];
 
+const HIDDEN: [&str; 3] = [".age", ".gnupg", ".ssh"];
 const APPS: [&str; 9] = [
     "base64", "base85", "bip39", "dice", "hex", "nostr", "rsa", "wif", "xprv",
 ];
@@ -227,17 +228,17 @@ fn unlisted() -> Node {
 
 pub struct Tree {
     root: Root,
-    gpg_user_id: Option<String>,
+    user_id: String,
     rsa_keys: Mutex<HashMap<Vec<u32>, Arc<RsaKey>>>,
     contents: Mutex<HashMap<Vec<String>, Arc<[u8]>>>,
 }
 
 impl Tree {
-    /// `gpg_user_id` enables the `.gnupg` directory.
-    pub fn new(root: Root, gpg_user_id: Option<String>) -> Self {
+    /// `user_id` is the OpenPGP user ID of the `.gnupg` keys.
+    pub fn new(root: Root, user_id: String) -> Self {
         Self {
             root,
-            gpg_user_id,
+            user_id,
             rsa_keys: Mutex::default(),
             contents: Mutex::default(),
         }
@@ -276,7 +277,7 @@ impl Tree {
         match path.first() {
             Some(&".ssh") => Self::ssh_node(&path[1..]),
             Some(&".age") => Self::age_node(&path[1..]),
-            Some(&".gnupg") if self.gpg_user_id.is_some() => Self::gnupg_node(&path[1..]),
+            Some(&".gnupg") => Self::gnupg_node(&path[1..]),
             _ => self.visible_node(path),
         }
     }
@@ -286,13 +287,7 @@ impl Tree {
         use Node::{Dir, File};
         use Output::*;
         let node = match *path {
-            [] => {
-                let mut hidden = vec![".age", ".ssh"];
-                if self.gpg_user_id.is_some() {
-                    hidden.push(".gnupg");
-                }
-                dir(&[hidden.as_slice(), APPS.as_slice()].concat(), &[])
-            }
+            [] => dir(&[HIDDEN.as_slice(), APPS.as_slice()].concat(), &[]),
 
             ["bip39"] => Dir(entries(LANGUAGES.iter().map(|l| l.0), Kind::Dir)),
             ["bip39", lang] => {
@@ -496,7 +491,7 @@ impl Tree {
         Some(node)
     }
 
-    /// `/.gnupg` (SPEC.md section 5.2). It exists only with a user ID.
+    /// `/.gnupg` (SPEC.md section 5.2).
     fn gnupg_node(path: &[&str]) -> Option<Node> {
         use Node::File;
         use Output::*;
@@ -579,10 +574,7 @@ impl Tree {
                 apps::age_pq_public(&entropy(&[APP_AGE, KEY_MLKEM768, index])?)
             }
             PgpSecret { bits, key_index } | PgpPublic { bits, key_index } => {
-                let user_id = self
-                    .gpg_user_id
-                    .as_deref()
-                    .expect("OpenPGP files need a user ID");
+                let user_id = &self.user_id;
                 let primary = self.rsa_key(&[APP_RSA, bits, key_index])?;
                 let subkeys: Vec<Arc<RsaKey>> = (0..3)
                     .map(|sub_key| self.rsa_key(&[APP_RSA, bits, key_index, sub_key]))
@@ -620,10 +612,10 @@ mod tests {
     const MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
     const USER_ID: &str = "Test <test@example.org>";
 
-    fn tree(gpg_user_id: Option<&str>) -> Tree {
+    fn tree() -> Tree {
         Tree::new(
-            Root::from_mnemonic(MNEMONIC).unwrap(),
-            gpg_user_id.map(String::from),
+            Root::from_mnemonic(MNEMONIC, "").unwrap(),
+            USER_ID.to_string(),
         )
     }
 
@@ -644,7 +636,7 @@ mod tests {
 
     #[test]
     fn first_request_examples() {
-        let t = tree(None);
+        let t = tree();
         assert_eq!(
             read(&t, "/bip39/english/12/0"),
             "prosper short ramp prepare exchange stove life snack client enough purpose fold\n"
@@ -657,7 +649,7 @@ mod tests {
 
     #[test]
     fn every_file_kind_exists() {
-        let t = tree(Some(USER_ID));
+        let t = tree();
         let files = [
             "bip39/japanese/24/5",
             "wif/0",
@@ -698,7 +690,7 @@ mod tests {
 
     #[test]
     fn encodings_use_their_derivation_paths() {
-        let t = tree(Some(USER_ID));
+        let t = tree();
         let age = t.root.entropy(&[APP_AGE, KEY_25519, 7]).unwrap();
         assert_eq!(
             read(&t, ".age/x25519/7/private.age"),
@@ -735,7 +727,7 @@ mod tests {
     #[test]
     fn bixfuse_application_vectors() {
         use sha2::{Digest, Sha256};
-        let t = tree(None);
+        let t = tree();
         let cases = [
             (
                 ".ssh/id_ed25519.pub",
@@ -796,7 +788,7 @@ mod tests {
 
     #[test]
     fn flat_defaults_are_index_0() {
-        let t = tree(Some(USER_ID));
+        let t = tree();
         let same = [
             (".ssh/id_ed25519", ".ssh/ed25519/0/id_ed25519"),
             (".ssh/id_ed25519.pub", ".ssh/ed25519/0/id_ed25519.pub"),
@@ -825,12 +817,12 @@ mod tests {
 
     #[test]
     fn listings() {
-        let t = tree(None);
+        let t = tree();
         assert_eq!(
             names(&t, "/"),
             [
-                ".age", ".ssh", "base64", "base85", "bip39", "dice", "hex", "nostr", "rsa", "wif",
-                "xprv"
+                ".age", ".gnupg", ".ssh", "base64", "base85", "bip39", "dice", "hex", "nostr",
+                "rsa", "wif", "xprv"
             ]
         );
         assert_eq!(names(&t, "bip39").len(), 10);
@@ -876,19 +868,14 @@ mod tests {
         assert_eq!(names(&t, ".age/x25519/3"), AGE_FILES);
         assert_eq!(names(&t, ".age/mlkem768x25519/3"), AGE_FILES);
 
-        let with_gpg = tree(Some(USER_ID));
-        assert!(names(&with_gpg, "/").contains(&".gnupg".to_string()));
-        assert_eq!(
-            names(&with_gpg, ".gnupg"),
-            ["rsa", "public.asc", "secret.asc"]
-        );
-        assert_eq!(names(&with_gpg, ".gnupg/rsa"), RSA_BITS_LISTED);
-        assert_eq!(names(&with_gpg, ".gnupg/rsa/3072/5"), PGP_FILES);
+        assert_eq!(names(&t, ".gnupg"), ["rsa", "public.asc", "secret.asc"]);
+        assert_eq!(names(&t, ".gnupg/rsa"), RSA_BITS_LISTED);
+        assert_eq!(names(&t, ".gnupg/rsa/3072/5"), PGP_FILES);
     }
 
     #[test]
     fn missing_paths() {
-        let t = tree(None);
+        let t = tree();
         let missing = [
             "nope",
             "age/x25519/0/private.age",
@@ -925,22 +912,18 @@ mod tests {
             ".age/x25519/0/private-pq.age",
             ".age/mlkem768x25519/0/private-pq.age",
             ".age/pq/0/private.age",
-            ".gnupg",
-            ".gnupg/secret.asc",
+            ".gnupg/rsa/2048/0/0/secret.asc",
+            ".gnupg/key.asc",
         ];
         for path in missing {
             assert_eq!(t.kind(&split(path)), None, "{path}");
             assert_eq!(t.read(&split(path)), Err(Error::NotFound), "{path}");
         }
-        let with_gpg = tree(Some(USER_ID));
-        for path in [".gnupg/rsa/2048/0/0/secret.asc", ".gnupg/key.asc"] {
-            assert_eq!(with_gpg.kind(&split(path)), None, "{path}");
-        }
     }
 
     #[test]
     fn directories_are_not_files() {
-        let t = tree(None);
+        let t = tree();
         assert_eq!(t.kind(&split("rsa/2048/0")), Some(Kind::Dir));
         assert_eq!(t.read(&split("rsa/2048/0")), Err(Error::NotFound));
     }

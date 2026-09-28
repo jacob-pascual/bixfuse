@@ -8,7 +8,7 @@ a file is the BIP-85 derivation path of the secret. The hidden directories
 tools. [SPEC.md](SPEC.md) is the full specification.
 
 ```console
-$ echo "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" | bixfuse /mnt/bixfuse &
+$ echo "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" | bixfuse --mnemonic-file - /mnt/bixfuse &
 $ cat /mnt/bixfuse/bip39/english/12/0
 prosper short ramp prepare exchange stove life snack client enough purpose fold
 $ cat /mnt/bixfuse/hex/32/0
@@ -46,8 +46,8 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINcZp5MpnnfHtWuKtCgQIpI0CQQPbSVnpvgZO9BvDq/l
 | `.age/x25519/{index}/private.age`, `public.age` | age X25519 identity and recipient |
 | `.age/private-pq.age`, `.age/public-pq.age` | age post-quantum identity and recipient, index 0 |
 | `.age/mlkem768x25519/{index}/private.age`, `public.age` | age post-quantum identity and recipient |
-| `.gnupg/secret.asc`, `.gnupg/public.asc` | OpenPGP key of `rsa/4096/0` and its sub keys (needs `--gpg-user-id`) |
-| `.gnupg/rsa/{key_bits}/{key_index}/secret.asc`, `public.asc` | OpenPGP key (needs `--gpg-user-id`) |
+| `.gnupg/secret.asc`, `.gnupg/public.asc` | OpenPGP key of `rsa/4096/0` and its sub keys |
+| `.gnupg/rsa/{key_bits}/{key_index}/secret.asc`, `public.asc` | OpenPGP key |
 
 BIP-85 does not define Ed25519 or age keys, so bixfuse gives each key type
 its own application number, in the style of BIP-85 RSA (`828365'` = ASCII
@@ -69,20 +69,20 @@ RSA keys are computed on first access: 4096-bit keys take 1 to 6 seconds.
 ## Usage
 
 ```
-bixfuse [--mnemonic-file <PATH>] [--gpg-user-id <USER_ID>] <MOUNTPOINT>
+bixfuse [--mnemonic-file <PATH>] [--passphrase-file <PATH>]
+        [--gpg-name <NAME>] [--gpg-email <EMAIL>] <MOUNTPOINT>
 ```
 
-bixfuse takes the BIP-39 mnemonic from the first of these sources:
+| Option | Meaning |
+|---|---|
+| `--mnemonic-file <PATH>` | The BIP-39 mnemonic. `-` means standard input. |
+| `--passphrase-file <PATH>` | The BIP-39 passphrase, without its trailing newline. `-` means standard input. Default: empty. |
+| `--gpg-name <NAME>` | The name in the OpenPGP user ID of `.gnupg`. Default: your full name in the user database. |
+| `--gpg-email <EMAIL>` | The email in that user ID. Default: `<user name>@<fully qualified host name>`. |
 
-1. Standard input, if it is not a terminal and is not empty.
-2. `--mnemonic-file <PATH>`.
-3. The first of these files that exists: `/etc/mnemonic`,
-   `$XDG_CONFIG_HOME/bixfuse/mnemonic` (default `~/.config/bixfuse/mnemonic`),
-   `./mnemonic`, `./mnemonic.txt`.
-
-A mnemonic on standard input together with `--mnemonic-file` is an error.
-When standard input is not a terminal, bixfuse reads it to the end. Where
-standard input stays open, as in `ssh host bixfuse ...`, add `< /dev/null`.
+Without `--mnemonic-file`, bixfuse uses the first of these files that exists:
+`/etc/mnemonic`, `$XDG_CONFIG_HOME/bixfuse/mnemonic` (default
+`~/.config/bixfuse/mnemonic`), `./mnemonic`, `./mnemonic.txt`.
 
 bixfuse runs in the foreground. Press Ctrl-C, or send `SIGTERM`, to unmount.
 

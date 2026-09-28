@@ -7,7 +7,11 @@ pkgs.testers.runNixOSTest {
   nodes.machine = {
     # A normal user can mount only with the setuid fusermount3 wrapper.
     programs.fuse.enable = true;
-    users.users.alice.isNormalUser = true;
+    users.users.alice = {
+      isNormalUser = true;
+      # The GECOS field: the default name of the OpenPGP user ID.
+      description = "Alice Liddell";
+    };
     environment.systemPackages = [
       bixfuse
       pkgs.age
@@ -31,9 +35,9 @@ pkgs.testers.runNixOSTest {
     hex_32_0 = "e477d4694160a384b28ee2f72b54edcf0822fd6e1ee1780447455cdbed8f8c45\n"
     alice(f"echo '{mnemonic}' > mnemonic")
     alice("mkdir mnt mnt2")
-    # The mnemonic comes from ./mnemonic, a default file. The test driver's
-    # standard input is not a terminal and does not end, so redirect it.
-    alice("setsid -f bixfuse --gpg-user-id 'Test <test@example.org>' mnt < /dev/null > bixfuse.log 2>&1")
+    # The mnemonic comes from ./mnemonic, a default file. The standard input
+    # of the test driver never ends; bixfuse must not read it.
+    alice("setsid -f bixfuse mnt > bixfuse.log 2>&1")
     # Only alice can stat the mount point: the mount does not use allow_other.
     mounted = "su - alice -c 'mountpoint -q mnt'"
     try:
@@ -46,16 +50,32 @@ pkgs.testers.runNixOSTest {
         assert alice("cat mnt/bip39/english/12/0") == "prosper short ramp prepare exchange stove life snack client enough purpose fold\n"
         assert alice("cat mnt/hex/32/0") == hex_32_0
 
-    with subtest("mnemonic sources"):
-        alice(f"echo '{mnemonic}' | setsid -f bixfuse mnt2 > bixfuse2.log 2>&1")
+    def mount2(command):
+        alice(f"{command} > bixfuse2.log 2>&1")
         machine.wait_until_succeeds("su - alice -c 'mountpoint -q mnt2'", timeout=timedelta(seconds=60))
-        assert alice("cat mnt2/hex/32/0") == hex_32_0
+
+    def unmount2():
         alice("fusermount3 -u mnt2")
         machine.wait_until_fails("su - alice -c 'mountpoint -q mnt2'")
 
-        both = machine.fail("su - alice -c " + shlex.quote(f"echo '{mnemonic}' | bixfuse --mnemonic-file mnemonic mnt2 2>&1"))
-        assert "use only one" in both, both
-        none = machine.fail("su - alice -c " + shlex.quote("cd /tmp && bixfuse /home/alice/mnt2 < /dev/null 2>&1"))
+    with subtest("mnemonic from standard input, and user ID flags"):
+        mount2(f"echo '{mnemonic}' | setsid -f bixfuse --mnemonic-file - --gpg-name Test --gpg-email test@example.org mnt2")
+        assert alice("cat mnt2/hex/32/0") == hex_32_0
+        uid = alice("GNUPGHOME=$(mktemp -d) gpg --batch --import --import-options show-only --with-colons mnt2/.gnupg/rsa/2048/0/public.asc")
+        assert "Test <test@example.org>" in uid, uid
+        unmount2()
+
+    with subtest("passphrase file"):
+        alice("echo TREZOR > passphrase")
+        mount2("setsid -f bixfuse --passphrase-file passphrase mnt2")
+        # From bipsea 4.0.0 with the passphrase "TREZOR".
+        assert alice("cat mnt2/hex/32/0") == "744209fe39f428f845f3e0ceb2401669c9731b0d285a9b5229e8a6c17c4276e0\n"
+        unmount2()
+
+    with subtest("input errors"):
+        both = machine.fail("su - alice -c " + shlex.quote(f"echo '{mnemonic}' | bixfuse --mnemonic-file - --passphrase-file - mnt2 2>&1"))
+        assert "cannot both read standard input" in both, both
+        none = machine.fail("su - alice -c " + shlex.quote("cd /tmp && bixfuse /home/alice/mnt2 2>&1"))
         assert "/etc/mnemonic, /home/alice/.config/bixfuse/mnemonic, ./mnemonic, ./mnemonic.txt" in none, none
 
     with subtest("listings"):
@@ -102,7 +122,10 @@ pkgs.testers.runNixOSTest {
         assert alice("ssh-keygen -y -f mnt/.ssh/rsa/2048/0/id_rsa") == alice("cat mnt/.ssh/rsa/2048/0/id_rsa.pub")
         assert alice("ssh-keygen -y -f mnt/rsa/2048/0/private.pem") == alice("cat mnt/.ssh/rsa/2048/0/id_rsa.pub")
         alice("gpg --batch --import mnt/.gnupg/rsa/2048/0/secret.asc")
-        assert "fpr:::::::::ECC1557BE1B91255FAC1BB370ABFE55998DF2870:" in alice("gpg --batch --with-colons --list-secret-keys")
+        keys = alice("gpg --batch --with-colons --list-secret-keys")
+        assert "fpr:::::::::ECC1557BE1B91255FAC1BB370ABFE55998DF2870:" in keys, keys
+        # The default user ID: the GECOS name, and alice@<fully qualified host name>.
+        assert "Alice Liddell <alice@machine" in keys, keys
 
     with subtest("missing paths, writes, and other users fail"):
         alice_fails("cat mnt/hex/base64/32/0")

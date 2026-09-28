@@ -33,42 +33,47 @@ The filesystem root `/` is the BIP-85 root `m/83696968'`. It has two parts:
 
 ## 3. Non-goals
 
-1. BIP-39 passphrases. The seed always uses the empty passphrase.
-2. Write access. The filesystem is read-only.
-3. Testnet output (TPRV). The input is a mnemonic, so the root key is always mainnet.
+1. Write access. The filesystem is read-only.
+2. Testnet output (TPRV). The input is a mnemonic, so the root key is always mainnet.
 
 ## 4. Command-line interface
 
 ```
-bixfuse [--mnemonic-file <PATH>] [--gpg-user-id <USER_ID>] <MOUNTPOINT>
+bixfuse [--mnemonic-file <PATH>] [--passphrase-file <PATH>]
+        [--gpg-name <NAME>] [--gpg-email <EMAIL>] <MOUNTPOINT>
 ```
 
 1. The mnemonic is one BIP-39 mnemonic (12, 15, 18, 21, or 24 words)
    followed by a newline. bixfuse detects the wordlist language. bixfuse
    rejects a mnemonic with a bad checksum.
-2. bixfuse takes the mnemonic from the first of these sources:
-   1. Standard input, if it is not a terminal and contains a non-whitespace
-      character. bixfuse reads standard input to the end of file. It never
-      reads a terminal, because a read from a background job (`&`) stops
-      the process.
-   2. `--mnemonic-file <PATH>`.
-   3. The first of these files that exists: `/etc/mnemonic`,
-      `$XDG_CONFIG_HOME/bixfuse/mnemonic`, `./mnemonic`, `./mnemonic.txt`.
-      If `$XDG_CONFIG_HOME` is not set or is not absolute, it is
-      `$HOME/.config` (XDG Base Directory Specification).
-3. If standard input gives a mnemonic and `--mnemonic-file` is given, bixfuse
-   stops with an error: the two sources can be two different seeds.
-4. If the chosen file cannot be read or holds no valid mnemonic, bixfuse
-   stops with an error. It does not try the next file.
-5. If no source gives a mnemonic, bixfuse stops with an error that lists
-   the files it tried.
-6. **Caution:** where standard input is an open pipe that does not end, for
-   example `ssh host bixfuse ...` without `-t`, bixfuse waits for the end of
-   file. Redirect standard input from `/dev/null` there.
+2. `--mnemonic-file <PATH>` gives the file of the mnemonic. The path `-`
+   means standard input. bixfuse reads standard input only for `-`.
+3. Without `--mnemonic-file`, bixfuse uses the first of these files that
+   exists: `/etc/mnemonic`, `$XDG_CONFIG_HOME/bixfuse/mnemonic`,
+   `./mnemonic`, `./mnemonic.txt`. If `$XDG_CONFIG_HOME` is not set or is not
+   absolute, it is `$HOME/.config` (XDG Base Directory Specification). If
+   that file cannot be read or holds no valid mnemonic, bixfuse stops with an
+   error; it does not try the next file. If no file exists, the error lists
+   the files that bixfuse tried.
+4. `--passphrase-file <PATH>` gives the file of the BIP-39 passphrase
+   (`-` means standard input). bixfuse removes one trailing line ending (`\n`
+   or `\r\n`); all other characters are part of the passphrase. BIP-39
+   normalizes the passphrase to NFKD. Without this option, the passphrase is
+   empty. The passphrase changes every derived key.
+5. If both `--mnemonic-file` and `--passphrase-file` are `-`, bixfuse stops
+   with an error.
+6. The OpenPGP user ID of the `/.gnupg` keys is `<NAME> <<EMAIL>>`:
+   - `NAME`: `--gpg-name`, else the full name of the current user in the
+     user database (the GECOS field up to the first comma, from
+     `getpwuid`: `/etc/passwd` on Linux, Directory Services on macOS), else
+     the user name.
+   - `EMAIL`: `--gpg-email`, else `<user name>@<fully qualified host name>`.
+     The fully qualified host name is the canonical name of the host name
+     from `getaddrinfo`, as for `hostname -f`; else the host name.
+   The key fingerprints do not depend on the user ID, but the signatures in
+   the files do. So the `/.gnupg` files differ between users and hosts.
 7. `MOUNTPOINT` is an existing empty directory.
-8. `--gpg-user-id` sets the OpenPGP user ID, for example `"Alice <alice@example.org>"`.
-   When this option is absent, `/.gnupg` does not exist.
-9. bixfuse runs in the foreground. It unmounts on `SIGINT` or `SIGTERM`.
+8. bixfuse runs in the foreground. It unmounts on `SIGINT` or `SIGTERM`.
 
 ## 5. Filesystem layout
 
@@ -107,7 +112,7 @@ subdirectories for every other key.
 | `/.age/x25519/{index}/private.age`, `.../public.age` | age X25519 | index: no |
 | `/.age/private-pq.age`, `/.age/public-pq.age` | age post-quantum, index 0 | yes |
 | `/.age/mlkem768x25519/{index}/private.age`, `.../public.age` | age post-quantum | index: no |
-| `/.gnupg/secret.asc`, `/.gnupg/public.asc` | `rsa/4096/0` and its sub keys 0, 1, 2 | yes, if `--gpg-user-id` |
+| `/.gnupg/secret.asc`, `/.gnupg/public.asc` | `rsa/4096/0` and its sub keys 0, 1, 2 | yes |
 | `/.gnupg/rsa/{key_bits}/{key_index}/secret.asc`, `.../public.asc` | `rsa/{key_bits}/{key_index}` and its sub keys 0, 1, 2 | key_bits: 2048, 3072, 4096 only; key_index: no |
 
 ### 5.3 Application numbers of bixfuse
@@ -155,7 +160,7 @@ exactly one path in its directory tree.
 
 ## 6. BIP-85 core
 
-1. Seed: BIP-39 seed of the mnemonic with the empty passphrase.
+1. Seed: BIP-39 seed of the mnemonic and the passphrase (section 4).
 2. Root: BIP-32 master key from the seed.
 3. Derive the child key `k` at the hardened path.
 4. Entropy: `HMAC-SHA512(key = "bip-entropy-from-k", msg = k)`, 64 bytes.
@@ -220,7 +225,7 @@ The seed is the seed of section 5.3. The formats are those of the
 
 ### 7.5 `/.gnupg`: OpenPGP keys (RSA GPG)
 
-The directory exists only if `--gpg-user-id` is set.
+The user ID is the user ID of section 4, item 6.
 
 1. Keys: RFC 4880 version 4 RSA keys. Creation time is 1231006505 for all keys.
    - Primary key: `m/83696968'/828365'/{key_bits}'/{key_index}'`, flag Certify.
@@ -286,9 +291,21 @@ The signatures can differ between tools.
 
 2026-09-28, third set (supersedes the positional `MNEMONIC_FILE` argument):
 
-12. The mnemonic comes from standard input, `--mnemonic-file`, or a fixed
-    list of default files, in that order (section 4).
-13. A mnemonic on standard input together with `--mnemonic-file` is an error.
+12. (Superseded by 14.) The mnemonic comes from standard input,
+    `--mnemonic-file`, or a fixed list of default files, in that order.
+13. (Superseded by 14.) A mnemonic on standard input together with
+    `--mnemonic-file` is an error.
+
+2026-09-28, fourth set:
+
+14. bixfuse reads standard input only for `--mnemonic-file -` (and
+    `--passphrase-file -`). Without `--mnemonic-file`, the default files of
+    section 4 are used.
+15. `--passphrase-file` gives the BIP-39 passphrase. (This removes the
+    non-goal "BIP-39 passphrases".)
+16. `--gpg-name` and `--gpg-email` replace `--gpg-user-id`. Their defaults
+    come from the user database and the host name, so `/.gnupg` always
+    exists.
 
 ### 9.2 Limits that are narrower than BIP-85
 
@@ -312,24 +329,28 @@ The signatures can differ between tools.
 ## 10. Test plan
 
 1. BIP-85 test vectors (all applications), from the BIP text and bipsea.
-2. The user's examples for the mnemonic `abandon ... about`:
+2. The BIP-39 passphrase vector ("TREZOR") of trezor/python-mnemonic, and
+   `hex/32/0` with that passphrase from bipsea.
+3. The user's examples for the mnemonic `abandon ... about`:
    - `bip39/english/12/0` = `prosper short ramp prepare exchange stove life snack client enough purpose fold`
    - `hex/32/0` = `e477d4694160a384b28ee2f72b54edcf0822fd6e1ee1780447455cdbed8f8c45`
-3. age X25519 and post-quantum vectors from bitcoin/bips#2174, for the
+4. age X25519 and post-quantum vectors from bitcoin/bips#2174, for the
    encoding functions. For the bixfuse paths of section 5.3: vectors from
    independent tools (entropy from bipsea, Ed25519 from Python
    `cryptography`, age recipients from `age-keygen` 1.3.2).
-4. RSA: SHA-256 of `private.pem` without its trailing newline matches the
+5. RSA: SHA-256 of `private.pem` without its trailing newline matches the
    reference vectors of ethankosakovsky/bip85 (2048-bit and 4096-bit).
-5. OpenSSH: `ssh-keygen -y` of `id_rsa`, `id_ed25519`, and `private.pem`
+6. OpenSSH: `ssh-keygen -y` of `id_rsa`, `id_ed25519`, and `private.pem`
    equals the `.pub` line, and a `ssh-keygen -Y sign` signature verifies.
-6. age: `age-keygen -y` of each identity equals its recipient, and a file
+7. age: `age-keygen -y` of each identity equals its recipient, and a file
    encrypted to each recipient decrypts with its identity.
-7. OpenPGP: `gpg --import` succeeds, capabilities are C/E/A/S, signatures
+8. OpenPGP: `gpg --import` succeeds, capabilities are C/E/A/S, signatures
    check, and the primary fingerprint equals an independent computation.
-8. Mount test on Linux: `nix/vm-test.nix` (flake check `vm-test`). A normal
+9. Mount test on Linux: `nix/vm-test.nix` (flake check `vm-test`). A normal
    user mounts, reads every application, runs age-keygen, ssh-keygen, and gpg
-   on the mounted files, and unmounts with `SIGTERM`.
-9. Mount test on macOS with macFUSE: pending. On 2026-09-27 the macFUSE
+   on the mounted files, and unmounts with `SIGTERM`. It also checks
+   `--mnemonic-file -`, the default mnemonic files, `--passphrase-file`, the
+   input errors, the default OpenPGP user ID, and `--gpg-name`/`--gpg-email`.
+10. Mount test on macOS with macFUSE: pending. On 2026-09-27 the macFUSE
    kernel extension was not enabled, and mounts failed with
    `Operation not permitted`.
