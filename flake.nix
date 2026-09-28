@@ -57,6 +57,7 @@
             pkgs.age
             pkgs.gnupg
             pkgs.openssh
+            pkgs.wireguard-tools
           ];
         };
       });

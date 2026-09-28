@@ -166,6 +166,10 @@ let
       options = { inherit bits index public; };
       path = t: ".gnupg/rsa/${str t.bits}/${str t.index}/${if t.public then "public" else "secret"}.asc";
     };
+    wireguard = {
+      options = { inherit index public; };
+      path = t: ".wireguard/x25519/${str t.index}/${if t.public then "public" else "private"}key";
+    };
   };
 
   # The path of SPEC.md section 5 of a secret, or null if the secret does

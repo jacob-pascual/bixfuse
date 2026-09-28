@@ -1,4 +1,4 @@
-//! Checks of the key files with the reference tools: age-keygen, ssh-keygen, gpg.
+//! Checks of the key files with the reference tools: age-keygen, ssh-keygen, gpg, wg.
 //! The tools must be on PATH. The Nix build and the dev shell supply them.
 
 use std::io::Write;
@@ -262,6 +262,24 @@ fn age_reads_the_keys() {
             &format!("age-pq-{index}"),
             &apps::age_pq_private(&pq),
             &apps::age_pq_public(&pq),
+        );
+    }
+}
+
+#[test]
+fn wg_derives_the_public_keys() {
+    let root = Root::from_mnemonic(MNEMONIC, "").unwrap();
+    for index in [0, 1, 2147483647] {
+        // m/83696968'/8771'/25519'/{index}' (SPEC.md section 5.3)
+        let entropy = root.entropy(&[8771, 25519, index]).unwrap();
+        let public = run(
+            Command::new("wg").arg("pubkey"),
+            format!("{}\n", apps::wireguard_private(&entropy)).as_bytes(),
+        );
+        assert_eq!(
+            public,
+            format!("{}\n", apps::wireguard_public(&entropy)),
+            "index {index}"
         );
     }
 }

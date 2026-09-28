@@ -4,7 +4,7 @@ bixfuse mounts a read-only FUSE filesystem of
 [BIP-85](https://github.com/bitcoin/bips/blob/master/bip-0085.mediawiki)
 secrets. The visible directories hold the BIP-85 applications: the path of
 a file is the BIP-85 derivation path of the secret. The hidden directories
-(`.ssh`, `.age`, `.gnupg`) hold the same secrets in the formats of other
+(`.ssh`, `.age`, `.gnupg`, `.wireguard`) hold the same secrets in the formats of other
 tools. [SPEC.md](SPEC.md) is the full specification.
 
 ```console
@@ -48,8 +48,10 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINcZp5MpnnfHtWuKtCgQIpI0CQQPbSVnpvgZO9BvDq/l
 | `.age/mlkem768x25519/{index}/private.age`, `public.age` | age post-quantum identity and recipient |
 | `.gnupg/secret.asc`, `.gnupg/public.asc` | OpenPGP key of `rsa/4096/0` and its sub keys |
 | `.gnupg/rsa/{key_bits}/{key_index}/secret.asc`, `public.asc` | OpenPGP key |
+| `.wireguard/privatekey`, `.wireguard/publickey` | WireGuard key pair, index 0 |
+| `.wireguard/x25519/{index}/privatekey`, `publickey` | WireGuard key pair |
 
-BIP-85 does not define Ed25519 or age keys, so bixfuse gives each key type
+BIP-85 does not define Ed25519, age or WireGuard keys, so bixfuse gives each key type
 its own application number, in the style of BIP-85 RSA (`828365'` = ASCII
 `RSA`). No two key types share a seed.
 
@@ -58,6 +60,7 @@ its own application number, in the style of BIP-85 RSA (`828365'` = ASCII
 | OpenSSH Ed25519 | `m/83696968'/838372'/25519'/{index}'` (`SSH`) |
 | age X25519 | `m/83696968'/657169'/25519'/{index}'` (`AGE`) |
 | age post-quantum | `m/83696968'/657169'/768'/{index}'` (`AGE`, ML-KEM-768) |
+| WireGuard | `m/83696968'/8771'/25519'/{index}'` (`WG`) |
 
 Other BIP-85 tools do not know these paths. If BIP-85 adopts
 [bitcoin/bips#2174](https://github.com/bitcoin/bips/pull/2174), which derives

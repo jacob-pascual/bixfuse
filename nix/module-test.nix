@@ -22,6 +22,7 @@ pkgs.testers.runNixOSTest {
     environment.systemPackages = [
       self.packages.${pkgs.stdenv.hostPlatform.system}.default
       pkgs.git
+      pkgs.wireguard-tools
     ];
 
     bixfuse = {
@@ -41,6 +42,7 @@ pkgs.testers.runNixOSTest {
           derivation = "hex/32/0";
           path = "/var/lib/token";
         };
+        wg0.type.wireguard = { };
       };
     };
 
@@ -78,6 +80,8 @@ pkgs.testers.runNixOSTest {
         assert machine.succeed("stat -L -c '%a %U' /var/lib/token").strip() == "400 root"
         machine.fail("su - alice -c 'cat /var/lib/token'")
         assert " /run/bixfuse.d ramfs " in machine.succeed("cat /proc/mounts")
+        # type.wireguard is the private key: wg derives the public key from it.
+        assert machine.succeed("wg pubkey < /run/bixfuse/wg0") == machine.succeed("bixfuse cat --mnemonic-file /etc/mnemonic .wireguard/publickey")
 
     with subtest("host keys"):
         machine.wait_for_unit("sshd.service")

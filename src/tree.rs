@@ -39,9 +39,10 @@ const APP_HEX: u32 = 128169;
 const APP_RSA: u32 = 828365;
 
 // The application numbers of bixfuse for key types that BIP-85 does not
-// define (SPEC.md section 5.3): ASCII "SSH" and "AGE", then the key type.
+// define (SPEC.md section 5.3): ASCII "SSH", "AGE" and "WG", then the key type.
 const APP_SSH: u32 = 838372;
 const APP_AGE: u32 = 657169;
+const APP_WG: u32 = 8771;
 const KEY_25519: u32 = 25519;
 const KEY_MLKEM768: u32 = 768;
 
@@ -62,7 +63,7 @@ const LANGUAGES: [(&str, Language, u32); 10] = [
     ("portuguese", Language::Portuguese, 9),
 ];
 
-const HIDDEN: [&str; 3] = [".age", ".gnupg", ".ssh"];
+const HIDDEN: [&str; 4] = [".age", ".gnupg", ".ssh", ".wireguard"];
 const APPS: [&str; 9] = [
     "base64", "base85", "bip39", "dice", "hex", "nostr", "rsa", "wif", "xprv",
 ];
@@ -87,6 +88,7 @@ const AGE_DEFAULT_FILES: [&str; 4] = [
     "public.age",
 ];
 const PGP_FILES: [&str; 2] = ["public.asc", "secret.asc"];
+const WG_FILES: [&str; 2] = ["privatekey", "publickey"];
 
 enum Node {
     /// A directory and the entries that `ls` shows.
@@ -164,6 +166,12 @@ enum Output {
     PgpPublic {
         bits: u32,
         key_index: u32,
+    },
+    WireguardPrivate {
+        index: u32,
+    },
+    WireguardPublic {
+        index: u32,
     },
 }
 
@@ -278,6 +286,7 @@ impl Tree {
             Some(&".ssh") => Self::ssh_node(&path[1..]),
             Some(&".age") => Self::age_node(&path[1..]),
             Some(&".gnupg") => Self::gnupg_node(&path[1..]),
+            Some(&".wireguard") => Self::wireguard_node(&path[1..]),
             _ => self.visible_node(path),
         }
     }
@@ -521,6 +530,32 @@ impl Tree {
         Some(node)
     }
 
+    /// `/.wireguard` (SPEC.md section 5.2).
+    fn wireguard_node(path: &[&str]) -> Option<Node> {
+        use Node::File;
+        use Output::*;
+        let wireguard = |i: &str, name: &str| -> Option<Node> {
+            let index = index(i)?;
+            match name {
+                "privatekey" => Some(File(WireguardPrivate { index })),
+                "publickey" => Some(File(WireguardPublic { index })),
+                _ => None,
+            }
+        };
+        let node = match *path {
+            [] => dir(&["x25519"], &WG_FILES),
+            ["x25519"] => unlisted(),
+            [name] => wireguard("0", name)?,
+            ["x25519", i] => {
+                index(i)?;
+                dir(&[], &WG_FILES)
+            }
+            ["x25519", i, name] => wireguard(i, name)?,
+            _ => return None,
+        };
+        Some(node)
+    }
+
     fn text(&self, output: &Output) -> Result<String, InvalidKey> {
         use Output::*;
         let entropy = |path: &[u32]| self.root.entropy(path);
@@ -585,6 +620,12 @@ impl Tree {
                 } else {
                     openpgp::public_key(user_id, &primary, subkeys)
                 }
+            }
+            WireguardPrivate { index } => {
+                apps::wireguard_private(&entropy(&[APP_WG, KEY_25519, index])?)
+            }
+            WireguardPublic { index } => {
+                apps::wireguard_public(&entropy(&[APP_WG, KEY_25519, index])?)
             }
         };
         Ok(text)
@@ -677,6 +718,10 @@ mod tests {
             ".age/mlkem768x25519/9/private.age",
             ".age/mlkem768x25519/9/public.age",
             ".gnupg/rsa/2048/0/public.asc",
+            ".wireguard/privatekey",
+            ".wireguard/publickey",
+            ".wireguard/x25519/9/privatekey",
+            ".wireguard/x25519/9/publickey",
         ];
         for path in files {
             assert_eq!(t.kind(&split(path)), Some(Kind::File), "{path}");
@@ -709,6 +754,11 @@ mod tests {
                 openssh::ed25519_public_key(&ssh[..32].try_into().unwrap())
             )
         );
+        let wg = t.root.entropy(&[APP_WG, KEY_25519, 7]).unwrap();
+        assert_eq!(
+            read(&t, ".wireguard/x25519/7/privatekey"),
+            format!("{}\n", apps::wireguard_private(&wg))
+        );
         let key = t.rsa_key(&[APP_RSA, 2048, 3, 1]).unwrap();
         assert_eq!(
             read(&t, "rsa/2048/3/1/private.pem"),
@@ -723,7 +773,9 @@ mod tests {
     /// Vectors from independent tools: entropy from bipsea 4.0.0, the
     /// Ed25519 public keys from Python `cryptography`, the age recipients
     /// from `age-keygen -y` 1.3.2. The post-quantum recipients are given as
-    /// SHA-256, because each one has 1959 characters.
+    /// SHA-256, because each one has 1959 characters. The WireGuard private
+    /// keys come from Python `hashlib` and `bip32` 5.0.0, and the WireGuard
+    /// public keys from `wg pubkey` (wireguard-tools 1.0.20260223).
     #[test]
     fn bixfuse_application_vectors() {
         use sha2::{Digest, Sha256};
@@ -761,6 +813,30 @@ mod tests {
                 ".age/mlkem768x25519/1/private.age",
                 "AGE-SECRET-KEY-PQ-1Z8T4ESDJ62CJE5R4U47CNE5W8HU6YL66XQGUT44E2JM3JWNDLMRQH46MYZ",
             ),
+            (
+                ".wireguard/privatekey",
+                "4CDv4xoGd61TE2JLVCsOI3UMkZSIRz6xdG4C145bBEQ=",
+            ),
+            (
+                ".wireguard/publickey",
+                "nCDVNCmh4JnLTGqLdG/ENqxCU9/XYiYB/e0n5P+dDFw=",
+            ),
+            (
+                ".wireguard/x25519/1/privatekey",
+                "aMmy6cCaJ/+OUeyHUPda7DEhwON04ydAjsMkfm4EPnc=",
+            ),
+            (
+                ".wireguard/x25519/1/publickey",
+                "EvQw1NfZ/O9CL072eCv+WQa9wVeRKf34ROlsURbQTmM=",
+            ),
+            (
+                ".wireguard/x25519/2147483647/privatekey",
+                "qD8kYkbMSDcBNPGYXozTHnxjLGMPT/HLAXbWBAE8sVA=",
+            ),
+            (
+                ".wireguard/x25519/2147483647/publickey",
+                "IbLrn4jdNrlRVzVNTL5bRUG1LKDilGmnSgEBJeDPhA0=",
+            ),
         ];
         for (path, want) in cases {
             assert_eq!(read(&t, path), format!("{want}\n"), "{path}");
@@ -796,6 +872,8 @@ mod tests {
             (".age/public.age", ".age/x25519/0/public.age"),
             (".age/private-pq.age", ".age/mlkem768x25519/0/private.age"),
             (".age/public-pq.age", ".age/mlkem768x25519/0/public.age"),
+            (".wireguard/privatekey", ".wireguard/x25519/0/privatekey"),
+            (".wireguard/publickey", ".wireguard/x25519/0/publickey"),
         ];
         for (flat, indexed) in same {
             assert_eq!(read(&t, flat), read(&t, indexed), "{flat}");
@@ -821,8 +899,19 @@ mod tests {
         assert_eq!(
             names(&t, "/"),
             [
-                ".age", ".gnupg", ".ssh", "base64", "base85", "bip39", "dice", "hex", "nostr",
-                "rsa", "wif", "xprv"
+                ".age",
+                ".gnupg",
+                ".ssh",
+                ".wireguard",
+                "base64",
+                "base85",
+                "bip39",
+                "dice",
+                "hex",
+                "nostr",
+                "rsa",
+                "wif",
+                "xprv"
             ]
         );
         assert_eq!(names(&t, "bip39").len(), 10);
@@ -871,6 +960,13 @@ mod tests {
         assert_eq!(names(&t, ".gnupg"), ["rsa", "public.asc", "secret.asc"]);
         assert_eq!(names(&t, ".gnupg/rsa"), RSA_BITS_LISTED);
         assert_eq!(names(&t, ".gnupg/rsa/3072/5"), PGP_FILES);
+
+        assert_eq!(
+            names(&t, ".wireguard"),
+            ["x25519", "privatekey", "publickey"]
+        );
+        assert!(names(&t, ".wireguard/x25519").is_empty());
+        assert_eq!(names(&t, ".wireguard/x25519/3"), WG_FILES);
     }
 
     #[test]
@@ -914,6 +1010,10 @@ mod tests {
             ".age/pq/0/private.age",
             ".gnupg/rsa/2048/0/0/secret.asc",
             ".gnupg/key.asc",
+            ".wireguard/private.key",
+            ".wireguard/x25519/01/privatekey",
+            ".wireguard/x25519/0/private.age",
+            ".wireguard/ed25519/0/privatekey",
         ];
         for path in missing {
             assert_eq!(t.kind(&split(path)), None, "{path}");

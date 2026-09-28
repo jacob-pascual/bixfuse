@@ -7,6 +7,7 @@
   age,
   gnupg,
   openssh,
+  wireguard-tools,
 }:
 
 rustPlatform.buildRustPackage {
@@ -34,6 +35,7 @@ rustPlatform.buildRustPackage {
     age
     gnupg
     openssh
+    wireguard-tools
   ];
 
   meta = {

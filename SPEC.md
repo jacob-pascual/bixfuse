@@ -15,15 +15,15 @@ The filesystem root `/` is the BIP-85 root `m/83696968'`. It has two parts:
    BIP-85 defines it.
 2. **Hidden directories** (`/.<app>`) hold application-specific encodings of
    BIP-85 outputs: OpenSSH keys in `/.ssh`, age keys in `/.age`, OpenPGP keys
-   in `/.gnupg`.
+   in `/.gnupg`, WireGuard keys in `/.wireguard`.
 
 ## 2. Goals
 
 1. Support every application in BIP-85 v2.1.0 (2026-08-02): BIP39, HD-Seed WIF,
    XPRV, HEX, PWD BASE64, PWD BASE85, RSA, RSA GPG, DICE, Nostr.
 2. Support key types that BIP-85 does not define: OpenSSH Ed25519 keys,
-   age X25519 identities, and age post-quantum (ML-KEM-768 + X25519)
-   identities. Each key type has its own application number (section 5.3), so
+   age X25519 identities, age post-quantum (ML-KEM-768 + X25519)
+   identities, and WireGuard keys. Each key type has its own application number (section 5.3), so
    no two key types share a seed.
 3. Produce outputs identical to the reference implementations:
    - [bipsea](https://github.com/akarve/bipsea) for all applications that bipsea supports.
@@ -121,6 +121,8 @@ subdirectories for every other key.
 | `/.age/mlkem768x25519/{index}/private.age`, `.../public.age` | age post-quantum | index: no |
 | `/.gnupg/secret.asc`, `/.gnupg/public.asc` | `rsa/4096/0` and its sub keys 0, 1, 2 | yes |
 | `/.gnupg/rsa/{key_bits}/{key_index}/secret.asc`, `.../public.asc` | `rsa/{key_bits}/{key_index}` and its sub keys 0, 1, 2 | key_bits: 2048, 3072, 4096 only; key_index: no |
+| `/.wireguard/privatekey`, `/.wireguard/publickey` | WireGuard, index 0 | yes |
+| `/.wireguard/x25519/{index}/privatekey`, `.../publickey` | WireGuard | index: no |
 
 ### 5.3 Application numbers of bixfuse
 
@@ -136,6 +138,7 @@ key type, as the `{key_bits}'` level does for RSA.
 | OpenSSH Ed25519 | `m/83696968'/838372'/25519'/{index}'` | `SSH` = 83 83 72; curve 25519 |
 | age X25519 | `m/83696968'/657169'/25519'/{index}'` | `AGE` = 65 71 69; curve 25519 |
 | age post-quantum | `m/83696968'/657169'/768'/{index}'` | `AGE`; ML-KEM-768 (with X25519) |
+| WireGuard | `m/83696968'/8771'/25519'/{index}'` | `WG` = 87 71; curve 25519 |
 
 The seed of each key is the first 32 bytes of the 64 bytes of entropy.
 These paths are a bixfuse convention: other BIP-85 tools do not derive them.
@@ -248,6 +251,19 @@ The primary key fingerprint depends only on the RSA key and the creation time.
 Another BIP-85 tool that uses the same RSA algorithm gets the same fingerprint.
 The signatures can differ between tools.
 
+### 7.6 `/.wireguard`: WireGuard keys
+
+The seed is the seed of section 5.3. The formats are those of `wg genkey`
+and `wg pubkey` (wireguard-tools).
+
+| File | Content |
+|---|---|
+| `privatekey` | RFC 4648 Base64 (44 characters) of the seed, clamped as `wg genkey` clamps a new key: clear the 3 lowest bits of byte 0, clear bit 7 of byte 31, set bit 6 of byte 31. |
+| `publickey` | Base64 of `X25519(private key, basepoint)`, the output of `wg pubkey`. |
+
+The clamping makes `privatekey` a key that `wg genkey` can write. WireGuard
+clamps every private key before use, so the public key does not change.
+
 ## 8. Filesystem behavior
 
 1. Mount options: read-only, filesystem name `bixfuse`, `default_permissions`.
@@ -327,6 +343,15 @@ The signatures can differ between tools.
 21. The modules never replace a key file with different contents.
 22. Option names use `enable` (NixOS convention), not `enabled`.
 
+2026-09-28, sixth set:
+
+23. WireGuard keys in `/.wireguard`, with their own application number
+    `8771'` (`WG`) and the key type level `25519'` (section 5.3). The first
+    user is pascuals-infra: each host derives its WireGuard key from the
+    host mnemonic.
+24. The file names are `privatekey` and `publickey`, as in the WireGuard
+    quick start (`wg genkey | tee privatekey | wg pubkey > publickey`).
+
 ### 9.2 Limits that are narrower than BIP-85
 
 1. `rolls` is at most 10000, as in bipsea. BIP-85 allows 2^32 - 1. A larger
@@ -390,6 +415,7 @@ only builds a path of section 5:
 | `age` | `index` (0), `public` (false) | `.age/x25519/{index}/{private,public}.age` |
 | `agePq` | `index` (0), `public` (false) | `.age/mlkem768x25519/{index}/{private,public}.age` |
 | `gpg` | `bits` (4096), `index` (0), `public` (false) | `.gnupg/rsa/{bits}/{index}/{secret,public}.asc` |
+| `wireguard` | `index` (0), `public` (false) | `.wireguard/x25519/{index}/{private,public}key` |
 
 Secrets are written to a new generation directory
 `<secretsMountPoint>/<generation>`, and then `secretsDir` becomes a symlink
@@ -462,7 +488,9 @@ secret, installation stops with an error.
 4. age X25519 and post-quantum vectors from bitcoin/bips#2174, for the
    encoding functions. For the bixfuse paths of section 5.3: vectors from
    independent tools (entropy from bipsea, Ed25519 from Python
-   `cryptography`, age recipients from `age-keygen` 1.3.2).
+   `cryptography`, age recipients from `age-keygen` 1.3.2, WireGuard private
+   keys from Python `hashlib` and `bip32` 5.0.0, WireGuard public keys from
+   `wg pubkey` 1.0.20260223).
 5. RSA: SHA-256 of `private.pem` without its trailing newline matches the
    reference vectors of ethankosakovsky/bip85 (2048-bit and 4096-bit).
 6. OpenSSH: `ssh-keygen -y` of `id_rsa`, `id_ed25519`, and `private.pem`
@@ -471,17 +499,20 @@ secret, installation stops with an error.
    encrypted to each recipient decrypts with its identity.
 8. OpenPGP: `gpg --import` succeeds, capabilities are C/E/A/S, signatures
    check, and the primary fingerprint equals an independent computation.
-9. Mount test on Linux: `nix/vm-test.nix` (flake check `vm-test`). A normal
-   user mounts, reads every application, runs age-keygen, ssh-keygen, and gpg
-   on the mounted files, and unmounts with `SIGTERM`. It also checks
-   `--mnemonic-file -`, the default mnemonic files, `--passphrase-file`, the
-   input errors, the default OpenPGP user ID, and `--gpg-name`/`--gpg-email`.
-10. Module test: `nix/module-test.nix` (flake check `module-test`). A host
+9. WireGuard: `wg pubkey` of each `privatekey` equals its `publickey`, and
+   each `privatekey` is clamped.
+10. Mount test on Linux: `nix/vm-test.nix` (flake check `vm-test`). A normal
+    user mounts, reads every application, runs age-keygen, ssh-keygen, gpg, and wg
+    on the mounted files, and unmounts with `SIGTERM`. It also checks
+    `--mnemonic-file -`, the default mnemonic files, `--passphrase-file`, the
+    input errors, the default OpenPGP user ID, and `--gpg-name`/`--gpg-email`.
+11. Module test: `nix/module-test.nix` (flake check `module-test`). A host
     with its own mnemonic installs typed and `derivation` secrets with owner,
-    group, mode, and a custom path; writes SSH host keys that sshd serves;
+    group, mode, and a custom path, and a `type.wireguard` secret that
+    `wg pubkey` reads; writes SSH host keys that sshd serves;
     refuses to replace a changed host key. A user with another mnemonic gets
     `~/.ssh/id_ed25519`, the git identity, and a secret from the systemd user
     service. Passed on `aarch64-linux` (2026-09-28).
-11. Mount test on macOS with macFUSE: pending. On 2026-09-27 the macFUSE
+12. Mount test on macOS with macFUSE: pending. On 2026-09-27 the macFUSE
    kernel extension was not enabled, and mounts failed with
    `Operation not permitted`.

@@ -17,6 +17,7 @@ pkgs.testers.runNixOSTest {
       pkgs.age
       pkgs.gnupg
       pkgs.openssh
+      pkgs.wireguard-tools
     ];
   };
 
@@ -82,7 +83,7 @@ pkgs.testers.runNixOSTest {
         # ls hides the hidden directories of the encodings; ls -A shows them.
         assert alice("ls mnt").split() == ["base64", "base85", "bip39", "dice", "hex", "nostr", "rsa", "wif", "xprv"]
         assert sorted(alice("ls -A mnt").split()) == [
-            ".age", ".gnupg", ".ssh", "base64", "base85", "bip39", "dice", "hex", "nostr", "rsa", "wif", "xprv",
+            ".age", ".gnupg", ".ssh", ".wireguard", "base64", "base85", "bip39", "dice", "hex", "nostr", "rsa", "wif", "xprv",
         ]
         assert sorted(alice("ls mnt/rsa/2048/0").split()) == ["0", "1", "2", "private.pem"]
         assert sorted(alice("ls -A mnt/.ssh").split()) == [
@@ -92,6 +93,7 @@ pkgs.testers.runNixOSTest {
             "mlkem768x25519", "private-pq.age", "private.age", "public-pq.age", "public.age", "x25519",
         ]
         assert sorted(alice("ls -A mnt/.gnupg").split()) == ["public.asc", "rsa", "secret.asc"]
+        assert sorted(alice("ls -A mnt/.wireguard").split()) == ["privatekey", "publickey", "x25519"]
 
     with subtest("every file kind"):
         for path in [
@@ -99,6 +101,7 @@ pkgs.testers.runNixOSTest {
             "dice/6/10/0", "nostr/1/1", "rsa/2048/0/1/private.pem",
             ".ssh/ed25519/1/id_ed25519.pub", ".ssh/rsa/2048/0/2/id_rsa.pub",
             ".age/x25519/1/public.age", ".age/mlkem768x25519/1/public.age", ".gnupg/rsa/2048/0/public.asc",
+            ".wireguard/x25519/1/publickey",
         ]:
             text = alice(f"cat mnt/{path}")
             assert len(text) > 1 and text.endswith("\n"), path
@@ -108,6 +111,7 @@ pkgs.testers.runNixOSTest {
         assert alice("cat mnt/.age/public.age") == alice("cat mnt/.age/x25519/0/public.age")
         assert alice("cat mnt/.age/public-pq.age") == alice("cat mnt/.age/mlkem768x25519/0/public.age")
         assert alice("cat mnt/.ssh/id_rsa.pub") == alice("cat mnt/.ssh/rsa/4096/0/id_rsa.pub")
+        assert alice("cat mnt/.wireguard/privatekey") == alice("cat mnt/.wireguard/x25519/0/privatekey")
 
     with subtest("attributes"):
         assert alice("stat -c '%a %U %s' mnt/hex/32/0").strip() == "400 alice 65"
@@ -121,6 +125,7 @@ pkgs.testers.runNixOSTest {
         assert alice("ssh-keygen -y -f mnt/.ssh/id_ed25519") == alice("cat mnt/.ssh/id_ed25519.pub")
         assert alice("ssh-keygen -y -f mnt/.ssh/rsa/2048/0/id_rsa") == alice("cat mnt/.ssh/rsa/2048/0/id_rsa.pub")
         assert alice("ssh-keygen -y -f mnt/rsa/2048/0/private.pem") == alice("cat mnt/.ssh/rsa/2048/0/id_rsa.pub")
+        assert alice("wg pubkey < mnt/.wireguard/privatekey") == alice("cat mnt/.wireguard/publickey")
         alice("gpg --batch --import mnt/.gnupg/rsa/2048/0/secret.asc")
         keys = alice("gpg --batch --with-colons --list-secret-keys")
         assert "fpr:::::::::ECC1557BE1B91255FAC1BB370ABFE55998DF2870:" in keys, keys

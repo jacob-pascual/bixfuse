@@ -133,6 +133,29 @@ pub fn age_pq_public(entropy: &[u8; 64]) -> String {
         .collect()
 }
 
+/// The first 32 bytes, clamped as `wg genkey` clamps a new key
+/// (`curve25519_clamp_secret` in wireguard-tools).
+fn wireguard_secret(entropy: &[u8; 64]) -> [u8; 32] {
+    let mut secret: [u8; 32] = entropy[..32].try_into().unwrap();
+    secret[0] &= 248;
+    secret[31] = (secret[31] & 127) | 64;
+    secret
+}
+
+/// The WireGuard private key, in Base64 as `wg genkey` writes it.
+pub fn wireguard_private(entropy: &[u8; 64]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(wireguard_secret(entropy))
+}
+
+/// The WireGuard public key, in Base64 as `wg pubkey` writes it.
+pub fn wireguard_public(entropy: &[u8; 64]) -> String {
+    let public = x25519_dalek::x25519(
+        wireguard_secret(entropy),
+        x25519_dalek::X25519_BASEPOINT_BYTES,
+    );
+    base64::engine::general_purpose::STANDARD.encode(public)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +283,18 @@ mod tests {
                 .collect::<String>(),
             "855bd04ee0cd6cfdf5717fb946d859824a79fbbdf6304dadcc11dbb91abe0df6"
         );
+    }
+
+    #[test]
+    fn wireguard_private_key_is_clamped() {
+        for e in [[0u8; 64], [0xff; 64]] {
+            let key = base64::engine::general_purpose::STANDARD
+                .decode(wireguard_private(&e))
+                .unwrap();
+            assert_eq!(key.len(), 32);
+            assert_eq!(key[0] & 7, 0);
+            assert_eq!(key[31] & 0xc0, 0x40);
+        }
     }
 
     /// Outputs of bipsea 4.0.0 (`bipsea derive -x <XPRV> ...`) for cases
